@@ -84,9 +84,10 @@ def create_params():
                         lr_decay_factor=None,
         
                         # Checkpoint settings
+                        max_num_ckpts_to_keep=int(1e2),
                         ckpt_save_frequency=4,
-                        ckpt_path='/Users/somil/Documents/research/Projects/model_based_navigation/temp/'
-                                  'session_2018-09-28_17-45-36/checkpoints/ckpt-5'
+                        ckpt_path = '/home/sampada_deglurkar/Visual-Navigation-Release/sampada_sine/'
+                                    'session_2022-09-17_16-01-57/checkpoints/ckpt-5'
     )
     
     # Data creation parameters
@@ -98,7 +99,7 @@ def create_params():
                                 data_points_per_file=10000,
                                 
                                 # Data directory
-                                data_dir='/home/somilb/Documents/Projects/visual_mpc/tmp'
+                                data_dir='/home/ext_drive/sampada_deglurkar/dummy_sine_data'
     )
     
     # Test parameters

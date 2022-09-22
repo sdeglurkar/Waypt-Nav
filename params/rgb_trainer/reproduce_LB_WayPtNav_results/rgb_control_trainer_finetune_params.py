@@ -73,10 +73,7 @@ def create_params():
     )
 
     # Change the data_dir
-    p.data_creation.data_dir = [
-        '/home/ext_drive/somilb/data/training_data/sbpd/sbpd_projected_grid_include_last_step_successful_goals_only/area3/full_episode_random_v1_100k',
-        '/home/ext_drive/somilb/data/training_data/sbpd/sbpd_projected_grid_include_last_step_successful_goals_only/area4/full_episode_random_v1_100k',
-        '/home/ext_drive/somilb/data/training_data/sbpd/sbpd_projected_grid_include_last_step_successful_goals_only/area5a/full_episode_random_v1_100k']
+    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
     
 
     # Seed for selecting the test scenarios and the number of such scenarios

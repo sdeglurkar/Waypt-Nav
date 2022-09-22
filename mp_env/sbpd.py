@@ -59,7 +59,10 @@ class Loader():
   def load_data(self, name, robot, flip=False):
     env = utils.Foo(padding=10, resolution=5, num_point_threshold=2,
       valid_min=-10, valid_max=200, n_samples_per_face=200)
-    building = mp_env.Building(self, name, robot, env, flip=flip)
+    # TODO (sdeglurkar): This is a hack to fix an error I was getting when
+    # running Waypt-Nav
+    # building = mp_env.Building(self, name, robot, env, flip=flip)
+    building = mp_env.Building(self, "area1", robot, env, flip=flip)
     return building
 
 class StanfordBuildingParserDataset(Loader):

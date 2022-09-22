@@ -105,7 +105,7 @@ def create_params(simulator_params):
                                 data_points_per_file=1000,
                                 
                                 # Data directory
-                                data_dir='./REPLACE_ME',
+                                data_dir='/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data',
 
                                 # Custom Simulator Params
                                 simulator_params = simulator_params

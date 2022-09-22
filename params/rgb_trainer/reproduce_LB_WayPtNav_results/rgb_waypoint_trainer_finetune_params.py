@@ -54,7 +54,9 @@ def create_params():
 
     # Change the learning rate and num_samples
     p.trainer.lr = 1e-4
-    p.trainer.num_samples = int(125e3)
+    # TODO (sdeglurkar) This is a hack -- have to check exactly how much data is 
+    # generated during data generation
+    p.trainer.num_samples = 99900 #int(125e3)
     
     # Checkpoint settings
     p.trainer.ckpt_save_frequency = 1
@@ -73,10 +75,7 @@ def create_params():
     p.trainer.ckpt_path = os.path.join(base_data_dir(), 'pretrained_weights/WayPtNav/session_2019-01-27_23-32-01/checkpoints/ckpt-9')
 
     # Change the data_dir
-    p.data_creation.data_dir = [
-        '/home/ext_drive/somilb/data/training_data/sbpd/sbpd_projected_grid_include_last_step_successful_goals_only/area3/full_episode_random_v1_100k',
-        '/home/ext_drive/somilb/data/training_data/sbpd/sbpd_projected_grid_include_last_step_successful_goals_only/area4/full_episode_random_v1_100k',
-        '/home/ext_drive/somilb/data/training_data/sbpd/sbpd_projected_grid_include_last_step_successful_goals_only/area5a/full_episode_random_v1_100k']
+    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
 
     # Seed for selecting the test scenarios and the number of such scenarios
     p.test.seed = 10

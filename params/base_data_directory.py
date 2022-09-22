@@ -1,2 +1,2 @@
 def base_data_dir():
-    return 'PATH/TO/DATA'
+    return '/home/ext_drive/sampada_deglurkar/LB_WayPtNav_Data'
