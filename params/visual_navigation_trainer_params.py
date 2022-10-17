@@ -39,7 +39,7 @@ def create_params(simulator_params):
                         seed=10,
                         
                         # Number of epochs
-                        num_epochs=400,
+                        num_epochs=60,
         
                         # Total number of samples in the dataset
                         num_samples=int(20e3),
@@ -66,7 +66,8 @@ def create_params(simulator_params):
                         # Checkpoint settings
                         max_num_ckpts_to_keep=int(1e2),
                         ckpt_save_frequency=20,
-                        ckpt_path='',
+                        ckpt_path='/home/sampada_deglurkar/Visual-Navigation-Release/sampada_sine/'
+                                    'session_2022-09-17_16-01-57/checkpoints/ckpt-5',
                         restore_from_ckpt=False,
 
                         # Callback settings
