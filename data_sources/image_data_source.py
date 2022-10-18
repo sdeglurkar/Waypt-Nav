@@ -44,6 +44,8 @@ class ImageDataSource(DataSource):
         Load the image-less data in the given data_dir, augment
         this dataset with images, and save the resulting image dataset
         in a new directory. If the data already exists, do nothing.
+
+        Also: Augment the dataset with costmaps.
         """
         
         # Old data directories that contain the raw information of the episode
@@ -87,77 +89,12 @@ class ImageDataSource(DataSource):
         
                     # Render the images from the simulator
                     img_nmkd = simulator.get_observation_from_data_dict_and_model(data, self.model)
+                    # Ask the simulator to get FMM cost given the occupancy grid
+                    costmap = simulator.generate_costmap(data)
         
                     # Save the image augmented data to the new directory
                     img_filename = os.path.join(new_data_dirs[-1], filename)
                     data['img_nmkd'] = np.array(img_nmkd)
-                    
-                    with open(img_filename, 'wb') as f:
-                        pickle.dump(data, f)
-
-                    # Add {Absolute file path: number of samples} to the
-                    # metadata dictionary
-                    metadata[img_filename] = self._get_n(data)
-               
-                # Save metadata
-                metadata_filename = os.path.join(new_data_dirs[-1], 'metadata.pkl')
-                with open(metadata_filename, 'wb') as f:
-                    pickle.dump(metadata, f)
-        return new_data_dirs
-
-    def _create_costmap_dataset(self):
-        """
-        Load the costmap-less data in the given data_dir, augment
-        this dataset with costmaps, and save the resulting costmap dataset
-        in a new directory. If the data already exists, do nothing.
-        """
-        
-        # Old data directories that contain the raw information of the episode
-        old_data_dirs = self.p.data_creation.data_dir
-        
-        # Placeholder for new data directories
-        new_data_dirs = []
-
-        for data_directory in old_data_dirs:
-            # Create a directory to save the image directory
-            new_data_dirs.append(self._create_image_dir(parent_dir=data_directory))
-            
-            # If the costmap data already exists, no need to recreate it
-            if len(os.listdir(new_data_dirs[-1])) > 0:
-                self._ensure_metadata_exists(new_data_dirs[-1])
-                continue
-            # Else create the data
-            else:
-                # First find the right building name
-                print('Warning! Finding the right building name is still a hack that has been put together for the '
-                      'SBPD dataset. Be very careful when you use it for the other datasets!')
-                if self.p.simulator_params.obstacle_map_params.renderer_params.dataset_name == 'sbpd':
-                    area_name = os.path.basename(os.path.abspath(os.path.join(data_directory, os.pardir)))
-                    self.p.simulator_params.obstacle_map_params.renderer_params.building_name = area_name
-                    
-                # Initialize the simulator and the model 
-                simulator = self.p.simulator_params.simulator(self.p.simulator_params)
-                
-                # List the data files in the directory
-                data_files = [os.path.join(data_directory, f) for f in os.listdir(data_directory) if f.endswith('.pkl')]
-    
-                metadata = {}
-
-                # Generate the costmaps
-                for data_file in data_files:
-                    with open(data_file, 'rb') as f:
-                        data = pickle.load(f)
-        
-                    # Get the filename 'file{:d}.pkl' and file_number '{:d}'
-                    filename, _ = self._extract_file_name_and_number(data_file, data_directory)
-        
-                    # Ask the simulator to perform value iteration from the occupancy grid
-                    # TODO (sdeglurkar): Put this in the params!
-                    costmap_size = 16
-                    costmap = simulator.generate_costmap(data, costmap_size)
-        
-                    # Save the image augmented data to the new directory
-                    img_filename = os.path.join(new_data_dirs[-1], filename)
                     data['costmap'] = costmap 
                     
                     with open(img_filename, 'wb') as f:

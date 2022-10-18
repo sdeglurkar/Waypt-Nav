@@ -1,5 +1,7 @@
+import numpy as np
 from obstacles.sbpd_map import SBPDMap
 from simulators.simulator import Simulator
+from trajectory.trajectory import Trajectory
 
 
 class SBPDSimulator(Simulator):
@@ -31,18 +33,20 @@ class SBPDSimulator(Simulator):
                                         **kwargs)
         return img_nmkd
     
-    def generate_costmap(self, data_dict, costmap_size):
+    def generate_costmap(self, data_dict):
         '''
-        Given the robot's current state, given by the data_dict, generate a 
-        costmap centered around the robot's state using value iteration on the 
-        occupancy grid.
+        Given the optimal waypoint, get the expert's cost of that waypoint from
+        the MPC problem.
         '''
-        obstacle_map = self.obstacle_map.fmm_map
-        costmap = obstacle_map.fmm_distance_map # This is a VoxelMap object
-        # TODO (sdeglurkar): 
-        # Convert this to an np array!
-        # Get the MPC cost 
-        return costmap
+        # The map origin of the FMM map is [0, 0] and the optimal_waypoint_ego_n3 is in relative
+        # coordinates with the ego position
+        waypoints = data_dict['optimal_waypoint_ego_n3']  
+        costmap = []  # Just scalars
+        n = len(waypoints)  # Batch size
+        k = 1  # 1-step "trajectories" -- just positions
+        one_step_trajectories = Trajectory(dt=0, n=n, k=k, position_nk2=waypoints[:, :2])
+        costmap = self.obj_fn.evaluate_function(one_step_trajectories)  # Tensor
+        return costmap.eval()
 
     def _reset_obstacle_map(self, rng):
         """
