@@ -30,6 +30,19 @@ class SBPDSimulator(Simulator):
         img_nmkd = self.get_observation(pos_n3=data_dict['vehicle_state_nk3'][:, 0],
                                         **kwargs)
         return img_nmkd
+    
+    def generate_costmap(self, data_dict, costmap_size):
+        '''
+        Given the robot's current state, given by the data_dict, generate a 
+        costmap centered around the robot's state using value iteration on the 
+        occupancy grid.
+        '''
+        obstacle_map = self.obstacle_map.fmm_map
+        costmap = obstacle_map.fmm_distance_map # This is a VoxelMap object
+        # TODO (sdeglurkar): 
+        # Convert this to an np array!
+        # Get the MPC cost 
+        return costmap
 
     def _reset_obstacle_map(self, rng):
         """
