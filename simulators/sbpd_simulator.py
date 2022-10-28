@@ -38,15 +38,29 @@ class SBPDSimulator(Simulator):
         Given the optimal waypoint, get the expert's cost of that waypoint from
         the MPC problem.
         '''
+        costmap = []  # Just scalars
         # The map origin of the FMM map is [0, 0] and the optimal_waypoint_ego_n3 is in relative
         # coordinates with the ego position
-        waypoints = data_dict['optimal_waypoint_ego_n3']  
-        costmap = []  # Just scalars
-        n = len(waypoints)  # Batch size
-        k = 1  # 1-step "trajectories" -- just positions
-        one_step_trajectories = Trajectory(dt=0, n=n, k=k, position_nk2=waypoints[:, :2])
-        costmap = self.obj_fn.evaluate_function(one_step_trajectories)  # Tensor
-        return costmap.eval()
+        waypoints = data_dict['optimal_waypoint_n3']  # TODO (sdeglurkar): Should it really be ego n3 
+        goal_positions = data_dict['goal_position_n2']
+        for i in range(len(goal_positions)):
+            goal_pos = goal_positions[i].reshape(1, 2)
+            waypt_pos = waypoints[i, :2]
+            waypt_heading = waypoints[i, 2]
+            # Get the FMM map with this goal position
+            fmm_map = self._init_fmm_map(goal_pos)
+            self._update_obj_fn(fmm_map)
+            n = 1  # Batch size
+            k = 1  # 1-step "trajectories" -- just waypoints
+            one_step_trajectories = Trajectory(dt=0, n=n, k=k, 
+                                                position_nk2=waypt_pos.reshape((n, k, 2)), 
+                                                heading_nk1=waypt_heading.reshape((n, k, 1)))
+            one_step_trajectories.update_valid_mask_nk()  # Needed for taking a valid mean of objective values
+            cost = self.obj_fn.evaluate_function(one_step_trajectories)  # Tensor
+            cost = cost[0].numpy()
+            costmap.append(cost)  
+        
+        return np.array(costmap)
 
     def _reset_obstacle_map(self, rng):
         """

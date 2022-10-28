@@ -360,18 +360,20 @@ class Simulator(SimulatorHelper):
         obj_val = tf.squeeze(self.obj_fn.evaluate_function(vehicle_trajectory))
         return obj_val
 
-    def _update_obj_fn(self):
+    def _update_obj_fn(self, fmm_map=None):
         """
         Update the objective function to use a new
         obstacle_map and fmm map
         """
+        if fmm_map == None:
+            fmm_map = self.fmm_map
         for objective in self.obj_fn.objectives:
             if isinstance(objective, ObstacleAvoidance):
                 objective.obstacle_map = self.obstacle_map
             elif isinstance(objective, GoalDistance):
-                objective.fmm_map = self.fmm_map
+                objective.fmm_map = fmm_map
             elif isinstance(objective, AngleDistance):
-                objective.fmm_map = self.fmm_map
+                objective.fmm_map = fmm_map
             else:
                 assert(False)
 
