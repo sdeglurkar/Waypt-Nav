@@ -1,4 +1,3 @@
-from multiprocessing.dummy import current_process
 import numpy as np
 from obstacles.sbpd_map import SBPDMap
 from simulators.simulator import Simulator

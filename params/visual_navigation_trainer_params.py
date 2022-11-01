@@ -66,8 +66,8 @@ def create_params(simulator_params):
                         # Checkpoint settings
                         max_num_ckpts_to_keep=int(1e2),
                         ckpt_save_frequency=20,
-                        ckpt_path='/home/sampada_deglurkar/Visual-Navigation-Release/sampada_sine/'
-                                    'session_2022-09-17_16-01-57/checkpoints/ckpt-5',
+                        ckpt_path='/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/'
+                                    'session_2022-10-17_18-38-34/checkpoints/ckpt-20',
                         restore_from_ckpt=False,
 
                         # Callback settings

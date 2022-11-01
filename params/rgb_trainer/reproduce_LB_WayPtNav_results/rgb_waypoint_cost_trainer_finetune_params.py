@@ -44,7 +44,7 @@ def create_params():
     p = create_rgb_trainer_params()
 
     # Change the number of inputs to the model
-    p.model.num_outputs = 3  # (x, y ,theta)
+    p.model.num_outputs = 4  # (x, y, theta) waypoint, cost
     
     # Image size to [224, 224, 3]
     p.model.num_inputs.image_size = [224, 224, 3]
