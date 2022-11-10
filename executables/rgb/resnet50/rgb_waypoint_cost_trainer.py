@@ -15,11 +15,11 @@ class RGBWaypointCostTrainer(VisualNavigationTrainer):
     def _modify_planner_params(self, p):
         """
         Modifies a DotMap parameter object
-        with parameters for a NNWaypointPlanner
+        with parameters for a NNWaypointCostPlanner
         """
-        from planners.nn_waypoint_planner import NNWaypointPlanner
+        from planners.nn_waypoint_cost_planner import NNWaypointCostPlanner
 
-        p.planner_params.planner = NNWaypointPlanner
+        p.planner_params.planner = NNWaypointCostPlanner
         p.planner_params.model = self.model
 
     def _summary_dir(self):

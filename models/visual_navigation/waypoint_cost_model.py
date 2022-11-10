@@ -1,5 +1,5 @@
 from models.visual_navigation.base import VisualNavigationModelBase
-
+import numpy as np
 
 class VisualNavigationWaypointCostModel(VisualNavigationModelBase):
     """
@@ -13,5 +13,5 @@ class VisualNavigationWaypointCostModel(VisualNavigationModelBase):
         """
         optimal_waypoints_n3 = raw_data['optimal_waypoint_ego_n3']
         optimal_cost = raw_data['costmap']
-        # TODO (sdeglurkar): Need to concatenate
-        return optimal_waypoints_n3, optimal_cost
+        optimal_cost = np.expand_dims(optimal_cost, axis=1)
+        return np.hstack((optimal_waypoints_n3, optimal_cost))

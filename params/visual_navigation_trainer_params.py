@@ -39,7 +39,7 @@ def create_params(simulator_params):
                         seed=10,
                         
                         # Number of epochs
-                        num_epochs=60,
+                        num_epochs=150,
         
                         # Total number of samples in the dataset
                         num_samples=int(20e3),

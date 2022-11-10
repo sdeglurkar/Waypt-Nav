@@ -72,7 +72,7 @@ def create_params():
     )
 
     # Checkpoint directory
-    p.trainer.ckpt_path = '/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/session_2022-10-17_18-38-34/checkpoints/ckpt-60'
+    p.trainer.ckpt_path = '/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/session_2022-11-02_10-00-27/checkpoints/ckpt-100'
     
     # Change the data_dir
     p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
@@ -86,7 +86,7 @@ def create_params():
                                          dirname=os.path.join(base_data_dir(), 'expert_success_goals/sbpd_projected_grid'))
     
     # Let's not look at the expert
-    p.test.simulate_expert = False
+    p.test.simulate_expert = True
     
     # Parameters for the metric curves
     p.test.metric_curves = DotMap(start_ckpt=1,

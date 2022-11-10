@@ -63,7 +63,6 @@ class SBPDSimulator(Simulator):
             # Take spline trajectory from current robot state to waypoint
             # and take the cost of that
             cost, _ = self.planner.eval_objective(start_config, goal_config)  # Tensor
-            print("COST", cost)
             cost = cost[0].numpy()
             costmap.append(cost)  
         
