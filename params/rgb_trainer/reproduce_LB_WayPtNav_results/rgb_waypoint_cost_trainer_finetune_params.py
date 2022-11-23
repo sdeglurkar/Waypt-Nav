@@ -85,7 +85,7 @@ def create_params():
     p.test.expert_success_goals = DotMap(use=True,
                                          dirname=os.path.join(base_data_dir(), 'expert_success_goals/sbpd_projected_grid'))
     
-    # Let's not look at the expert
+    # Expert test-time performance 
     p.test.simulate_expert = True
     
     # Parameters for the metric curves
