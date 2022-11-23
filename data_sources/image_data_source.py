@@ -45,7 +45,7 @@ class ImageDataSource(DataSource):
         this dataset with images, and save the resulting image dataset
         in a new directory. If the data already exists, do nothing.
 
-        Also: Augment the dataset with costmaps.
+        Also: Augment the dataset with costs.
         """
         
         # Old data directories that contain the raw information of the episode
@@ -90,12 +90,12 @@ class ImageDataSource(DataSource):
                     # Render the images from the simulator
                     img_nmkd = simulator.get_observation_from_data_dict_and_model(data, self.model)
                     # Ask the simulator to get FMM cost given the occupancy grid
-                    costmap = simulator.generate_costmap(data)
+                    cost = simulator.generate_cost(data)
         
                     # Save the image augmented data to the new directory
                     img_filename = os.path.join(new_data_dirs[-1], filename)
                     data['img_nmkd'] = np.array(img_nmkd)
-                    data['costmap'] = costmap 
+                    data['cost'] = cost
                     
                     with open(img_filename, 'wb') as f:
                         pickle.dump(data, f)

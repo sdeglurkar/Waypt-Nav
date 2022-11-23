@@ -33,12 +33,12 @@ class SBPDSimulator(Simulator):
                                         **kwargs)
         return img_nmkd
     
-    def generate_costmap(self, data_dict):
+    def generate_cost(self, data_dict):
         '''
         Given the optimal waypoint, get the expert's cost of that waypoint from
         the MPC problem.
         '''
-        costmap = []  # Just scalars
+        cost = []  
         current_states = data_dict['vehicle_state_nk3'][:, 0]  # First state in 30-step episode
         waypoints = data_dict['optimal_waypoint_n3']   
         goal_positions = data_dict['goal_position_n2']
@@ -62,11 +62,11 @@ class SBPDSimulator(Simulator):
                                         heading_nk1=waypt_heading.reshape((n, k, 1)))
             # Take spline trajectory from current robot state to waypoint
             # and take the cost of that
-            cost, _ = self.planner.eval_objective(start_config, goal_config)  # Tensor
-            cost = cost[0].numpy()
-            costmap.append(cost)  
+            c, _ = self.planner.eval_objective(start_config, goal_config)  # Tensor
+            c = c[0].numpy()
+            cost.append(c)  
         
-        return np.array(costmap)
+        return np.array(cost)
 
     def _reset_obstacle_map(self, rng):
         """

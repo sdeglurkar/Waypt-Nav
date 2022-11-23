@@ -131,7 +131,7 @@ class NNWaypointCostPlanner(NNPlanner):
         data['optimal_waypoint_ego_n3'] = np.ones((1, 3), dtype=np.float32)
         data['waypoint_horizon_n1'] = np.ones((1, 1), dtype=np.float32)
         data['optimal_control_nk2'] = np.ones((1, 1, 2), dtype=np.float32)
-        data['costmap'] = np.ones((1,), dtype=np.float32)
+        data['cost'] = np.ones((1,), dtype=np.float32)
         return data
 
     def optimize(self, start_config):
