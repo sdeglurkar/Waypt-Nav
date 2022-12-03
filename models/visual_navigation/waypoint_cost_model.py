@@ -9,7 +9,7 @@ class VisualNavigationWaypointCostModel(VisualNavigationModelBase):
     """
     def _optimal_labels(self, raw_data):
         """
-        Supervision for the optimal waypoints.
+        Supervision for the optimal waypoints and their costs.
         """
         optimal_waypoints_n3 = raw_data['optimal_waypoint_ego_n3']
         optimal_cost = raw_data['cost']

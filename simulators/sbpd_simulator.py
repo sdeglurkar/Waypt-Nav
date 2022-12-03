@@ -39,7 +39,10 @@ class SBPDSimulator(Simulator):
         the MPC problem.
         '''
         cost = []  
-        current_states = data_dict['vehicle_state_nk3'][:, 0]  # First state in 30-step episode
+        # First state in 30-step episode
+        # The 30-step episode is a trajectory snippet in which the agent
+        # tries to reach the waypoint
+        current_states = data_dict['vehicle_state_nk3'][:, 0]  
         waypoints = data_dict['optimal_waypoint_n3']   
         goal_positions = data_dict['goal_position_n2']
         for i in range(len(goal_positions)):

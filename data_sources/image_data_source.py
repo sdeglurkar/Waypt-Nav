@@ -45,7 +45,9 @@ class ImageDataSource(DataSource):
         this dataset with images, and save the resulting image dataset
         in a new directory. If the data already exists, do nothing.
 
-        Also: Augment the dataset with costs.
+        Also: Augment the dataset with costs. This is done during training
+        time in case in the future we want to generate costmaps instead of
+        costs (and those would function a lot like images).
         """
         
         # Old data directories that contain the raw information of the episode

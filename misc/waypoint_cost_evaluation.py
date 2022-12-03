@@ -5,12 +5,9 @@ expert.
 '''
 
 import argparse 
-import matplotlib.pyplot as plt
 import numpy as np
 import os
 import pickle
-
-from utils import utils
 
 
 def parse_args():
@@ -83,9 +80,10 @@ if __name__ == "__main__":
     for file in os.listdir(method_dir):
         if file == "metadata.pkl": continue
 
-        # Waypoints
         method_dict = pickle.load(open(method_dir + file, "rb"))
         expert_dict = pickle.load(open(expert_dir + file, "rb"))
+
+        # Waypoints
         method_waypoints = method_dict['vehicle_data']['waypoint_config']['position_nk2']
         expert_waypoints = expert_dict['vehicle_data']['waypoint_config']['position_nk2']
         try:
