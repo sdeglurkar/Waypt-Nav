@@ -152,7 +152,7 @@ class NNWaypointCostPlanner(NNPlanner):
         if nn_output_114.shape[2] == 4:
             predicted_waypoint_cost = nn_output_114[:, :, 3]
         else:
-            predicted_waypoint_cost = -1
+            predicted_waypoint_cost = nn_output_114[:, :, 0] * 0  # Dummy
 
         # Transform to World Coordinates
         waypoint_ego_config = SystemConfig(dt=self.params.dt, n=1, k=1,

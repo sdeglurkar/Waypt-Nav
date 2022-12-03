@@ -90,12 +90,14 @@ if __name__ == "__main__":
         expert_waypoints = expert_dict['vehicle_data']['waypoint_config']['position_nk2']
         try:
             true_costs_of_waypoints = method_dict['vehicle_data']['cost_of_waypoint']
-            method_costs_of_waypoints = method_dict['vehicle_data']['predicted_cost_of_waypoint'].reshape(len(true_costs_of_waypoints))
             costs_of_expert_waypoints = expert_dict['vehicle_data']['cost_of_waypoint']
         except KeyError: 
             true_costs_of_waypoints = np.array([-1])
-            method_costs_of_waypoints = np.array([-1])
             costs_of_expert_waypoints = np.array([-1])
+        try:
+            method_costs_of_waypoints = method_dict['vehicle_data']['predicted_cost_of_waypoint'].reshape(len(true_costs_of_waypoints))
+        except KeyError:
+            method_costs_of_waypoints = np.array([-1])
         
 
         # Time and Speed
