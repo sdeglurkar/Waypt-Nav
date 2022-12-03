@@ -1,5 +1,7 @@
+import numpy as np
 from obstacles.sbpd_map import SBPDMap
 from simulators.simulator import Simulator
+from trajectory.trajectory import Trajectory, SystemConfig
 
 
 class SBPDSimulator(Simulator):
@@ -30,6 +32,44 @@ class SBPDSimulator(Simulator):
         img_nmkd = self.get_observation(pos_n3=data_dict['vehicle_state_nk3'][:, 0],
                                         **kwargs)
         return img_nmkd
+    
+    def generate_cost(self, data_dict):
+        '''
+        Given the optimal waypoint, get the expert's cost of that waypoint from
+        the MPC problem.
+        '''
+        cost = []  
+        # First state in 30-step episode
+        # The 30-step episode is a trajectory snippet in which the agent
+        # tries to reach the waypoint
+        current_states = data_dict['vehicle_state_nk3'][:, 0]  
+        waypoints = data_dict['optimal_waypoint_n3']   
+        goal_positions = data_dict['goal_position_n2']
+        for i in range(len(goal_positions)):
+            current_pos = current_states[i, :2]
+            current_heading = current_states[i, 2]
+            goal_pos = goal_positions[i].reshape(1, 2)
+            waypt_pos = waypoints[i, :2]
+            waypt_heading = waypoints[i, 2]
+            # Get the FMM map with this goal position
+            fmm_map = self._init_fmm_map(goal_pos)
+            self._update_obj_fn(fmm_map)
+
+            n = 1  # Batch size
+            k = 1  # 1-step "trajectories" -- just waypoints
+            start_config = SystemConfig(dt=0, n=n, k=k, 
+                                        position_nk2=current_pos.reshape((n, k, 2)), 
+                                        heading_nk1=current_heading.reshape((n, k, 1)))
+            goal_config = SystemConfig(dt=0, n=n, k=k, 
+                                        position_nk2=waypt_pos.reshape((n, k, 2)),
+                                        heading_nk1=waypt_heading.reshape((n, k, 1)))
+            # Take spline trajectory from current robot state to waypoint
+            # and take the cost of that
+            c, _ = self.planner.eval_objective(start_config, goal_config)  # Tensor
+            c = c[0].numpy()
+            cost.append(c)  
+        
+        return np.array(cost)
 
     def _reset_obstacle_map(self, rng):
         """

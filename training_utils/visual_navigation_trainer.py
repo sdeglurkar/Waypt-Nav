@@ -1,3 +1,4 @@
+from planners.sampling_costs_planner import SamplingCostsPlanner
 from training_utils.trainer_frontend_helper import TrainerFrontendHelper
 from utils import utils
 import tensorflow as tf
@@ -148,9 +149,12 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
                 simulate_kwargs = self._ensure_expert_success_data_exists_if_needed()
                 number_tests = self.p.test.number_tests
 
+            # TODO (sdeglurkar) Hack! Setting this to True again because it gets set to False somewhere else
+            self.p.test.simulate_expert = True
             # Optionally initialize the Expert Simulator to be tested
             if self.p.test.simulate_expert:
                 expert_simulator_params = self.p.simulator_params
+                expert_simulator_params.planner_params.planner = SamplingCostsPlanner
                 expert_simulator_data = self._init_simulator_data(expert_simulator_params,
                                                                   number_tests,
                                                                   self.p.test.seed,
@@ -347,7 +351,9 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
             utils.mkdir_if_missing(trajectory_data_dir)
 
             data = {}
-            vehicle_trajectory, vehicle_data, vehicle_data_last_step, vehicle_commanded_actions_1kf = simulator.get_simulator_data_numpy_repr()
+            vehicle_trajectory, vehicle_data, vehicle_data_last_step, \
+                vehicle_commanded_actions_1kf, obj_val, max_obj_val, min_obj_val \
+                    = simulator.get_simulator_data_numpy_repr()
             data['vehicle_trajectory'] = vehicle_trajectory
             data['vehicle_data'] = vehicle_data
             data['vehicle_data_last_step'] = vehicle_data_last_step
@@ -358,6 +364,10 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
             data['episode_type_int'] = simulator.episode_type
             data['episode_type_string'] = simulator.params.episode_termination_reasons[simulator.episode_type]
             data['valid_episode'] = simulator.valid_episode
+
+            data['mean_obj_val'] = obj_val
+            data['max_obj_val'] = max_obj_val
+            data['min_obj_val'] = min_obj_val
 
             # Current Occupancy Grid- Useful for plotting these trajectories later
             if hasattr(simulator.obstacle_map, 'occupancy_grid_map'):

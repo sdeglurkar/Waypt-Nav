@@ -44,7 +44,7 @@ def create_params():
     p = create_rgb_trainer_params()
 
     # Change the number of inputs to the model
-    p.model.num_outputs = 3  # (x, y ,theta)
+    p.model.num_outputs = 4  # (x, y, theta) waypoint, cost
     
     # Image size to [224, 224, 3]
     p.model.num_inputs.image_size = [224, 224, 3]
@@ -72,7 +72,7 @@ def create_params():
     )
 
     # Checkpoint directory
-    p.trainer.ckpt_path = '/home/sampada_deglurkar/Visual-Navigation-Release/sampada_wayptnav/session_2022-09-21_10-31-13/checkpoints/ckpt-110'
+    p.trainer.ckpt_path = '/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/session_2022-11-02_10-00-27/checkpoints/ckpt-100'
     
     # Change the data_dir
     p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
@@ -85,8 +85,8 @@ def create_params():
     p.test.expert_success_goals = DotMap(use=True,
                                          dirname=os.path.join(base_data_dir(), 'expert_success_goals/sbpd_projected_grid'))
     
-    # Let's not look at the expert
-    p.test.simulate_expert = False
+    # Expert test-time performance 
+    p.test.simulate_expert = True
     
     # Parameters for the metric curves
     p.test.metric_curves = DotMap(start_ckpt=1,
