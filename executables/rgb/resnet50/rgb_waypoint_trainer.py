@@ -18,8 +18,10 @@ class RGBWaypointTrainer(VisualNavigationTrainer):
         with parameters for a NNWaypointPlanner
         """
         from planners.nn_waypoint_planner import NNWaypointPlanner
+        from planners.nn_waypoint_planner import NNWaypointCostPlanner
 
-        p.planner_params.planner = NNWaypointPlanner
+        # p.planner_params.planner = NNWaypointPlanner
+        p.planner_params.planner = NNWaypointCostPlanner
         p.planner_params.model = self.model
 
     def _summary_dir(self):

@@ -50,6 +50,16 @@ class ObjectiveFunction(object):
             valid_mask_nk = trajectory.valid_mask_nk
             obj_sum = tf.reduce_sum(objective_values*valid_mask_nk, axis=1)
             res = obj_sum / trajectory.valid_horizons_n1[:, 0]
+        elif self.params.obj_type == 'max':
+            res = tf.reduce_max(objective_values, axis=1)
+        elif self.params.obj_type == 'valid_max':
+            valid_mask_nk = trajectory.valid_mask_nk
+            res = tf.reduce_max(objective_values*valid_mask_nk, axis=1)
+        elif self.params.obj_type == 'min':
+            res = tf.reduce_min(objective_values, axis=1)
+        elif self.params.obj_type == 'valid_min':
+            valid_mask_nk = trajectory.valid_mask_nk
+            res = tf.reduce_min(objective_values*valid_mask_nk, axis=1)
         else:
             assert(False)
         return res

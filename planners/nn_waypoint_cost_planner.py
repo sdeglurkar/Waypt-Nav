@@ -146,14 +146,18 @@ class NNWaypointCostPlanner(NNPlanner):
         processed_data = model.create_nn_inputs_and_outputs(raw_data)
         
         # Predict the NN output
-        nn_output_113 = model.predict_nn_output_with_postprocessing(processed_data['inputs'],
+        nn_output_114 = model.predict_nn_output_with_postprocessing(processed_data['inputs'],
                                                                     is_training=False)[:, None]
-        predicted_waypoint_cost = nn_output_113[:, :, 3]
+        # If model predicts cost
+        if nn_output_114.shape[2] == 4:
+            predicted_waypoint_cost = nn_output_114[:, :, 3]
+        else:
+            predicted_waypoint_cost = -1
 
         # Transform to World Coordinates
         waypoint_ego_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                           position_nk2=nn_output_113[:, :, :2],
-                                           heading_nk1=nn_output_113[:, :, 2:3])
+                                           position_nk2=nn_output_114[:, :, :2],
+                                           heading_nk1=nn_output_114[:, :, 2:3])
         self.params.system_dynamics.to_world_coordinates(start_config,
                                                          waypoint_ego_config,
                                                          self.waypoint_world_config)

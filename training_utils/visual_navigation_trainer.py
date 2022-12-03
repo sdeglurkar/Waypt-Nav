@@ -351,7 +351,9 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
             utils.mkdir_if_missing(trajectory_data_dir)
 
             data = {}
-            vehicle_trajectory, vehicle_data, vehicle_data_last_step, vehicle_commanded_actions_1kf = simulator.get_simulator_data_numpy_repr()
+            vehicle_trajectory, vehicle_data, vehicle_data_last_step, \
+                vehicle_commanded_actions_1kf, obj_val, max_obj_val, min_obj_val \
+                    = simulator.get_simulator_data_numpy_repr()
             data['vehicle_trajectory'] = vehicle_trajectory
             data['vehicle_data'] = vehicle_data
             data['vehicle_data_last_step'] = vehicle_data_last_step
@@ -362,6 +364,10 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
             data['episode_type_int'] = simulator.episode_type
             data['episode_type_string'] = simulator.params.episode_termination_reasons[simulator.episode_type]
             data['valid_episode'] = simulator.valid_episode
+
+            data['mean_obj_val'] = obj_val
+            data['max_obj_val'] = max_obj_val
+            data['min_obj_val'] = min_obj_val
 
             # Current Occupancy Grid- Useful for plotting these trajectories later
             if hasattr(simulator.obstacle_map, 'occupancy_grid_map'):

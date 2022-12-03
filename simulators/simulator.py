@@ -69,7 +69,11 @@ class Simulator(SimulatorHelper):
         self.episode_type = episode_data['episode_type']
         self.valid_episode = episode_data['valid_episode']
         self.commanded_actions_1kf = episode_data['commanded_actions_1kf']
+        # Mean objective value!
         self.obj_val = self._compute_objective_value(self.vehicle_trajectory)
+        # For diagnostics
+        self.max_obj_val = self._compute_objective_value(self.vehicle_trajectory, type='valid_max')
+        self.min_obj_val = self._compute_objective_value(self.vehicle_trajectory, type='valid_min')
 
     def _iterate(self, config):
         """ Runs the planner for one step from config to generate a
@@ -139,7 +143,11 @@ class Simulator(SimulatorHelper):
         vehicle_data = self.planner.convert_planner_data_to_numpy_repr(self.vehicle_data)
         vehicle_data_last_step = self.planner.convert_planner_data_to_numpy_repr(self.vehicle_data_last_step)
         vehicle_commanded_actions_1kf = self.commanded_actions_1kf.numpy()
-        return vehicle_trajectory, vehicle_data, vehicle_data_last_step, vehicle_commanded_actions_1kf
+        obj_val = self.obj_val.numpy()
+        max_obj_val = self.max_obj_val.numpy()
+        min_obj_val = self.min_obj_val.numpy()
+        return vehicle_trajectory, vehicle_data, vehicle_data_last_step, \
+            vehicle_commanded_actions_1kf, obj_val, max_obj_val, min_obj_val
 
     def _enforce_episode_termination_conditions(self, vehicle_trajectory, planner_data,
                                                 commanded_actions_nkf):
@@ -201,6 +209,8 @@ class Simulator(SimulatorHelper):
 
         self.vehicle_trajectory = Trajectory(dt=self.params.dt, n=1, k=0)
         self.obj_val = np.inf
+        self.max_obj_val = np.inf
+        self.min_obj_val = np.inf
         self.vehicle_data = {}
 
     def _reset_obstacle_map(self, rng):
@@ -351,14 +361,23 @@ class Simulator(SimulatorHelper):
                                         position_nk2=goal_112)
         return False
 
-    def _compute_objective_value(self, vehicle_trajectory):
-        p = self.params.objective_fn_params
-        if p.obj_type == 'valid_mean':
+    def _compute_objective_value(self, vehicle_trajectory, type=None):
+        # Keep the temp variable to avoid permanently changing the obj_type
+        temp = self.params.objective_fn_params.obj_type
+        if type == None:
+            assert(self.params.objective_fn_params.obj_type in \
+                ['valid_mean', 'mean', 'valid_max', 'max', 'valid_min', 'min'])
+        else:    
+            self.params.objective_fn_params.obj_type = type 
+        # Work with p in case the above else statement was reached
+        p = self.params.objective_fn_params.obj_type
+        
+        if p == 'valid_mean' or p == 'valid_max' or p == 'valid_min':
             vehicle_trajectory.update_valid_mask_nk()
-        else:
-            assert(p.obj_type in ['valid_mean', 'mean'])
+
         obj_val = tf.squeeze(self.obj_fn.evaluate_function(vehicle_trajectory))
-        return obj_val
+        self.params.objective_fn_params.obj_type = temp
+        return obj_val 
 
     def _update_obj_fn(self, fmm_map=None):
         """

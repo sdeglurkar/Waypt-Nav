@@ -72,7 +72,7 @@ def create_params():
     )
 
     # Checkpoint directory
-    p.trainer.ckpt_path = '/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/session_2022-10-17_18-38-34/checkpoints/ckpt-60'
+    p.trainer.ckpt_path = '/home/sampada_deglurkar/Visual-Navigation-Release/sampada_wayptnav/session_2022-09-21_10-31-13/checkpoints/ckpt-110'
     
     # Change the data_dir
     p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
