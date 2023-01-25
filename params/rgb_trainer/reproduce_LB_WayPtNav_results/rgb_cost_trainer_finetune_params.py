@@ -16,6 +16,9 @@ def create_rgb_trainer_params():
     # Ensure the waypoint grid is projected SBPD Grid
     simulator_params.planner_params.control_pipeline_params.waypoint_params = create_waypoint_params()
 
+    # Maximum number of candidate waypoints per goal and robot speed data point
+    simulator_params.planner_params.data_creation.num_candidate_waypoints = 3
+
     # Ensure the renderer modality is rgb
     simulator_params.obstacle_map_params.renderer_params.camera_params.modalities = ['rgb']
     simulator_params.obstacle_map_params.renderer_params.camera_params.img_channels = 3
@@ -44,19 +47,24 @@ def create_params():
     p = create_rgb_trainer_params()
 
     # Change the number of outputs for the model
-    p.model.num_outputs = 4  # (x, y, theta) waypoint, cost
+    p.model.num_outputs = 1  # cost
     
     # Image size to [224, 224, 3]
     p.model.num_inputs.image_size = [224, 224, 3]
+
+    p.model.num_inputs.num_state_features=2 + 2 + 3  # Goal (x, y) position + Vehicle's current speed and
+                                                     # angular speed + Candidate waypoint (x, y, theta)
     
     # Finetune the resnet weights
     p.model.arch.finetune_resnet_weights = True
 
     # Change the learning rate and num_samples
     p.trainer.lr = 1e-4
+
+    num_candidate_waypoints = p.simulator_params.planner_params.data_creation.num_candidate_waypoints
     # TODO (sdeglurkar) This is a hack -- have to check exactly how much data is 
     # generated during data generation
-    p.trainer.num_samples = 99900 #int(125e3)
+    p.trainer.num_samples = 99900 * num_candidate_waypoints #int(125e3)
     
     # Checkpoint settings
     p.trainer.ckpt_save_frequency = 1
@@ -75,7 +83,7 @@ def create_params():
     p.trainer.ckpt_path = '/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/session_2022-11-02_10-00-27/checkpoints/ckpt-100'
     
     # Change the data_dir
-    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
+    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/costnav_data']
 
     # Seed for selecting the test scenarios and the number of such scenarios
     p.test.seed = 10
