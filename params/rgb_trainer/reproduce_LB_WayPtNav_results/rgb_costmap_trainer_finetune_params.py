@@ -48,13 +48,10 @@ def create_params():
 
     # Change the number of outputs for the model
     num_candidate_waypoints = p.simulator_params.planner_params.data_creation.num_candidate_waypoints
-    p.model.num_outputs = num_candidate_waypoints + 1  # costmap, +1 for optimal waypoint
+    p.model.num_outputs = num_candidate_waypoints + 1  # costmap size, +1 for optimal waypoint
 
     # Image size to [224, 224, 3]
     p.model.num_inputs.image_size = [224, 224, 3]
-
-    p.model.num_inputs.num_state_features=2 + 2  # Goal (x, y) position + Vehicle's current speed and
-                                                # angular speed 
 
     # Finetune the resnet weights
     p.model.arch.finetune_resnet_weights = True
