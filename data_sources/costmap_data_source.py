@@ -31,14 +31,9 @@ class CostmapDataSource(VisualNavigationDataSource):
         data['goal_position_n2'] = []
         data['goal_position_ego_n2'] = []
 
-        # Optimal waypoint configuration information
+        # Optimal waypoint configuration information -- just for debugging
         data['optimal_waypoint_n3'] = []
         data['optimal_waypoint_ego_n3'] = []
-
-        # All waypoints and their costs
-        data['all_waypoints_n3'] = []
-        data['all_waypoints_ego_n3'] = []
-        data['all_waypoints_costs'] = []
 
         # Costmap
         data['costmap'] = []
@@ -62,9 +57,6 @@ class CostmapDataSource(VisualNavigationDataSource):
         data['last_step_goal_position_ego_n2'] = []
         data['last_step_optimal_waypoint_n3'] = []
         data['last_step_optimal_waypoint_ego_n3'] = []
-        data['last_all_waypoints_n3'] = []
-        data['last_all_waypoints_ego_n3'] = []
-        data['last_all_waypoints_costs'] = []
         data['last_costmap'] = []
         data['last_step_optimal_control_nk2'] = []
         data['last_step_data_valid_n'] = []
@@ -92,12 +84,16 @@ class CostmapDataSource(VisualNavigationDataSource):
                                                                                  goal_n13)
         waypoint_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(start_nk3,
                                                                                      waypoint_n13)
-        all_waypoints_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(start_nk3,
+        all_waypoints_number = simulator.vehicle_data['all_waypoints_number']
+        all_waypoints_start_nk3 = np.repeat(start_nk3, all_waypoints_number, axis=0)
+        all_waypoints_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(all_waypoints_start_nk3,
                                                                                     all_waypoints_n13)
 
         all_waypoints_costs = simulator.vehicle_data['all_waypoint_costs'] # This is a list of np.arrays
         all_waypoints_costs = np.expand_dims(np.concatenate(all_waypoints_costs), axis=1)
         costmap = np.hstack((all_waypoints_ego_n13[:, 0], all_waypoints_costs))
+        # All values of all_waypoints_number should be the same 
+        costmap = costmap.reshape(-1, all_waypoints_number[0], 4)
 
         # Goal Data
         data['goal_position_n2'].append(goal_n13[:, 0, :2])
@@ -106,9 +102,6 @@ class CostmapDataSource(VisualNavigationDataSource):
         # Waypoints and costs
         data['optimal_waypoint_n3'].append(waypoint_n13[:, 0])
         data['optimal_waypoint_ego_n3'].append(waypoint_ego_n13[:, 0])
-        data['all_waypoints_n3'].append(all_waypoints_n13[:, 0])
-        data['all_waypoints_ego_n3'].append(all_waypoints_ego_n13[:, 0])
-        data['all_waypoints_costs'].append(all_waypoints_costs)
         
         # Costmap
         data['costmap'].append(costmap)
@@ -149,11 +142,15 @@ class CostmapDataSource(VisualNavigationDataSource):
                                                                                  last_step_goal_n13)
         waypoint_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(start_nk3,
                                                                                      last_step_waypoint_n13)
-        last_all_waypoints_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(start_nk3,
+        all_waypoints_number = data_last_step['all_waypoints_number']
+        all_waypoints_start_nk3 = np.repeat(start_nk3, all_waypoints_number, axis=0)
+        last_all_waypoints_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(all_waypoints_start_nk3,
                                                                                      last_all_waypoints_n13)
 
         last_all_waypoints_costs = data_last_step['all_waypoint_costs'] 
+        last_all_waypoints_costs = np.expand_dims(last_all_waypoints_costs, axis=1)
         last_costmap = np.hstack((last_all_waypoints_ego_n13[:, 0], last_all_waypoints_costs))
+        last_costmap = last_costmap.reshape(-1, all_waypoints_number, 4)
 
         data['last_step_goal_position_n2'].append(last_step_goal_n13[:, 0, :2])
 
@@ -161,10 +158,6 @@ class CostmapDataSource(VisualNavigationDataSource):
 
         data['last_step_optimal_waypoint_n3'].append(last_step_waypoint_n13[:, 0, :])
         data['last_step_optimal_waypoint_ego_n3'].append(waypoint_ego_n13[:, 0, :])
-        data['last_all_waypoints_n3'].append(last_all_waypoints_n13[:, 0])
-        data['last_all_waypoints_ego_n3'].append(last_all_waypoints_ego_n13[:, 0])
-
-        data['last_all_waypoints_costs'].append(last_all_waypoints_costs)
 
         data['last_costmap'].append(last_costmap)
 

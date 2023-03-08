@@ -17,7 +17,7 @@ def create_rgb_trainer_params():
     simulator_params.planner_params.control_pipeline_params.waypoint_params = create_waypoint_params()
 
     # Maximum number of candidate waypoints per goal and robot speed data point
-    simulator_params.planner_params.data_creation.num_candidate_waypoints = 3
+    simulator_params.planner_params.data_creation.num_candidate_waypoints = 9
 
     # Ensure the renderer modality is rgb
     simulator_params.obstacle_map_params.renderer_params.camera_params.modalities = ['rgb']
