@@ -76,16 +76,19 @@ class CostmapDataSource(VisualNavigationDataSource):
 
         # Convert to egocentric coordinates
         start_nk3 = simulator.vehicle_data['system_config'].position_and_heading_nk3().numpy()
+        print("\nSTART NK3", start_nk3, "TRAJECTORY", simulator.vehicle_data['trajectory'].position_and_heading_nk3().numpy())
         goal_n13 = np.broadcast_to(simulator.goal_config.position_and_heading_nk3().numpy(), (n, 1, 3))
         waypoint_n13 = simulator.vehicle_data['waypoint_config'].position_and_heading_nk3().numpy()
         all_waypoints_n13 = simulator.vehicle_data['all_waypoint_configs'].position_and_heading_nk3().numpy()
 
         goal_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(start_nk3,
                                                                                  goal_n13)
+        print("GOAL, GOAL EGO", goal_n13, start_nk3, goal_ego_n13)
         waypoint_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(start_nk3,
                                                                                      waypoint_n13)
         all_waypoints_number = simulator.vehicle_data['all_waypoints_number']
         all_waypoints_start_nk3 = np.repeat(start_nk3, all_waypoints_number, axis=0)
+        print("\nALL WAYPOINTS START NK3", all_waypoints_start_nk3)
         all_waypoints_ego_n13 = DubinsCar.convert_position_and_heading_to_ego_coordinates(all_waypoints_start_nk3,
                                                                                     all_waypoints_n13)
 

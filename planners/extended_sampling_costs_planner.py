@@ -133,13 +133,16 @@ class ExtendedSamplingCostsPlanner(Planner):
             4. Return all other waypoints considered and their associated costs
         """
         obj_vals, data = self.eval_objective(start_config)
+        #print("\nSTART CONFIG", start_config.position_and_heading_nk3())
         min_idx = tf.argmin(obj_vals)
+        print("\nMIN IDX", min_idx)
         min_cost = obj_vals[min_idx]
 
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
 
         self.opt_waypt.assign_from_config_batch_idx(waypts, min_idx)
         self.opt_traj.assign_from_trajectory_batch_idx(trajectories_lqr, min_idx)
+        #print("\nOPT TRAJ", self.opt_traj.position_and_heading_nk3())
 
         # Convert horizon in seconds to horizon in # of steps
         min_horizon = int(tf.ceil(horizons_s[min_idx, 0] / self.params.dt).numpy())

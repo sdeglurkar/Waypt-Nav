@@ -46,13 +46,17 @@ class SBPDSimulator(Simulator):
         waypoints = data_dict['optimal_waypoint_n3']   
         goal_positions = data_dict['goal_position_n2']
         for i in range(len(goal_positions)):
+            print("\n\n", current_states[i, :], waypoints[i, :], goal_positions[i], "\n\n")
             current_pos = current_states[i, :2]
             current_heading = current_states[i, 2]
             goal_pos = goal_positions[i].reshape(1, 2)
             waypt_pos = waypoints[i, :2]
             waypt_heading = waypoints[i, 2]
             # Get the FMM map with this goal position
-            fmm_map = self._init_fmm_map(goal_pos)
+            if i == 0:
+                fmm_map = self._init_fmm_map(goal_pos)
+            else:
+                fmm_map.change_goal(goal_pos)
             self._update_obj_fn(fmm_map)
 
             n = 1  # Batch size
@@ -65,7 +69,10 @@ class SBPDSimulator(Simulator):
                                         heading_nk1=waypt_heading.reshape((n, k, 1)))
             # Take spline trajectory from current robot state to waypoint
             # and take the cost of that
+            dum_cost, _ = self.planner.eval_objective(start_config)
             c, _ = self.planner.eval_objective(start_config, goal_config)  # Tensor
+            import tensorflow as tf
+            print("\n\nDUM COST, Cost", dum_cost[1198], dum_cost[92], dum_cost[79], min(dum_cost), tf.argmin(dum_cost), c)
             c = c[0].numpy()
             cost.append(c)  
         
