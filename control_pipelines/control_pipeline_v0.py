@@ -53,14 +53,9 @@ class ControlPipelineV0(ControlPipelineBase):
         if goal_config is None:
             waypt_configs, horizons, trajectories_lqr, trajectories_spline, controllers = \
                 self._plan_to_all_waypoints(idx, start_config)
-            #print("PLAN TO ALL WAYPOINTS", trajectories_lqr.position_and_heading_nk3(), trajectories_lqr.position_and_heading_nk3()[1198])
         else:
-            waypt_idx = self.helper.compute_closest_waypt_idx(goal_config, self.waypt_configs_world[idx])
-            waypt_configs = self.waypt_configs_world[idx][waypt_idx]
-            print("\nWAYPT IDX", waypt_idx, waypt_configs)
             waypt_configs, horizons, trajectories_lqr, trajectories_spline, controllers = \
                 self._plan_to_a_waypoint(idx, start_config, goal_config)
-            #print("PLAN TO A WAYPOINT", trajectories_lqr.position_and_heading_nk3())
             
         trajectories_lqr.update_valid_mask_nk()
         return waypt_configs, horizons, trajectories_lqr, trajectories_spline, controllers

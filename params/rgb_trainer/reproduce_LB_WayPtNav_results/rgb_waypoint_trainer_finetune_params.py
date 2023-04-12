@@ -27,7 +27,7 @@ def create_rgb_trainer_params():
     simulator_params.episode_horizon_s = 80.0
 
     # Ensure the renderer is using area3
-    simulator_params.obstacle_map_params.renderer_params.building_name = 'area1'
+    simulator_params.obstacle_map_params.renderer_params.building_name = 'area6'
 
     # Save trajectory data
     simulator_params.save_trajectory_data = True
@@ -54,9 +54,7 @@ def create_params():
 
     # Change the learning rate and num_samples
     p.trainer.lr = 1e-4
-    # TODO (sdeglurkar) This is a hack -- have to check exactly how much data is 
-    # generated during data generation
-    p.trainer.num_samples = 99900 #int(125e3)
+    p.trainer.num_samples = 124996 #int(125e3)
     
     # Checkpoint settings
     p.trainer.ckpt_save_frequency = 1
@@ -72,10 +70,13 @@ def create_params():
     )
 
     # Checkpoint directory
-    p.trainer.ckpt_path = '/home/sampada_deglurkar/Visual-Navigation-Release/sampada_wayptnav/session_2022-09-21_10-31-13/checkpoints/ckpt-110'
+    p.trainer.ckpt_path = '/home/sampada_deglurkar/Waypt-Nav/reproduce_LB_WayptNavResults/session_2023-04-09_11-43-15/checkpoints/ckpt-40'
     
     # Change the data_dir
-    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
+    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/wayptnav_data/area3/data',
+                                '/home/ext_drive/sampada_deglurkar/wayptnav_data/area4/data',
+                                '/home/ext_drive/sampada_deglurkar/wayptnav_data/area4/one_more_data',
+                                '/home/ext_drive/sampada_deglurkar/wayptnav_data/area5a/data']
 
     # Seed for selecting the test scenarios and the number of such scenarios
     p.test.seed = 10

@@ -71,6 +71,7 @@ class ImageDataSource(DataSource):
                       'SBPD dataset. Be very careful when you use it for the other datasets!')
                 if self.p.simulator_params.obstacle_map_params.renderer_params.dataset_name == 'sbpd':
                     area_name = os.path.basename(os.path.abspath(os.path.join(data_directory, os.pardir)))
+                    print("\nArea Name:", area_name, "\n")
                     self.p.simulator_params.obstacle_map_params.renderer_params.building_name = area_name
                     
                 # Initialize the simulator and the model to render images

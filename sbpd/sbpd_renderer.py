@@ -140,10 +140,7 @@ class SBPDRenderer():
         """
 
         traversible_dir = self.p.traversible_dir
-        # TODO (sdeglurkar): This is a hack to fix an error I was getting when
-        # running Waypt-Nav
-        # traversible_dir = os.path.join(traversible_dir, self.p.building_name)
-        traversible_dir = os.path.join(traversible_dir, "area1")
+        traversible_dir = os.path.join(traversible_dir, self.p.building_name)
 
         if self.p.load_traversible_from_pickle_file or not self.p.load_meshes:
             filename = os.path.join(traversible_dir, 'data.pkl')
