@@ -34,6 +34,11 @@ class Simulator(SimulatorHelper):
         p.episode_horizon = int(np.ceil(p.episode_horizon_s / dt))
         p.control_horizon = int(np.ceil(p.control_horizon_s / dt))
         p.dt = dt
+
+        # TODO (sdeglurkar): These are actually differentiable planner params 
+        # only but keeping them here temporarily
+        p.planner_params.diff_planner_uncertainty_weight = 1.0
+        p.planner_params.len_costmap = 10
  
         return p
 
