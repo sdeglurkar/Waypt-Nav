@@ -3,6 +3,7 @@ import tensorflow as tf
 from planners.nn_planner import NNPlanner
 from trajectory.trajectory import Trajectory, SystemConfig
 
+EPSILON = 0.0001
 
 class DifferentiablePlanner(NNPlanner):
     """ A sampling-based planner that is differentiable with respect 
@@ -21,37 +22,59 @@ class DifferentiablePlanner(NNPlanner):
         tfe = tf.contrib.eager
         self.costs = tfe.Variable(np.zeros((self.len_costmap)))
         self.uncertainties = tfe.Variable(np.zeros((self.len_costmap)))
+
+        self.pre_determined_uncertainties = \
+            tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
+        self.pre_determined_noise = np.random.rand(self.len_costmap)*self.noise
         
     def get_uncertainties(self):
         '''
         For now a dummy function that will just output random numbers, 
         should later be a function defined by the model.
         '''
-        return tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
-
-    def planner_internal_cost(self, costmap, uncertainties):
-        '''
-        Returns the planner internal cost of all candidate sampled
-        spline trajectories, in which all candidate samples' NN-provided 
-        costs and uncertainties are given by 'costmap' and 
-        'uncertainties'.
-        '''
-        self.costs.assign(costmap)
-        self.uncertainties.assign(uncertainties)
-        denominator = tf.reduce_sum(self.costs) + self.theta * tf.reduce_sum(self.uncertainties)
-        numerator = self.costs + self.theta * self.uncertainties
-        return tf.divide(numerator, denominator)
+        # return tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
+        return self.pre_determined_uncertainties
 
     def planner_loss(self, gt_traj, costmap, uncertainties):
         '''
         We're not actually training the planner but this is important
         for the definition of the planner gradient.
+        Part of the computation involves computing the planner internal 
+        cost of all candidate sampled spline trajectories, in which all 
+        candidate samples' NN-provided costs and uncertainties are given by 
+        'costmap' and 'uncertainties'.
         '''
-        planner_internal_costs = self.planner_internal_cost(costmap, uncertainties)
+        loss_grads = True
+        softmax_grad = False
+        cost_grads = False
         with tf.GradientTape() as tape:
-            loss = tf.losses.softmax_cross_entropy(gt_traj, -planner_internal_costs)
-        grads = tape.gradient(loss, [self.costs, self.uncertainties])
-        return loss, grads
+            self.costs.assign(costmap)
+            #self.costs = tf.clip_by_value(self.costs, EPSILON, 1 - EPSILON)
+            self.uncertainties.assign(uncertainties)
+            # denominator = tf.reduce_sum(self.costs) + self.theta * tf.reduce_sum(self.uncertainties)
+            # numerator = self.costs + self.theta * self.uncertainties
+            # planner_internal_costs = tf.divide(numerator, denominator)
+            planner_internal_costs = self.costs + self.theta * self.uncertainties
+            softmax = tf.nn.softmax(-planner_internal_costs)
+            clipped_softmax = tf.clip_by_value(softmax, EPSILON, 1 - EPSILON)
+            print("CLIPPED SOFTMAX, LOG", clipped_softmax, tf.log(clipped_softmax))
+            loss = tf.reduce_mean(-tf.reduce_sum(gt_traj * tf.log(clipped_softmax)))
+            # planner_internal_costs = self.costs + self.uncertainties
+            # loss = tf.losses.mean_squared_error(gt_traj, planner_internal_costs)
+            # loss = tf.losses.softmax_cross_entropy(gt_traj, -planner_internal_costs)
+        if loss_grads:
+            loss_grads = tape.gradient(loss, [softmax, planner_internal_costs, self.costs, self.uncertainties])
+            softmax_grad = None
+            cost_grads = None
+        elif softmax_grad:
+            loss_grads = None
+            softmax_grad = tape.gradient(clipped_softmax, [planner_internal_costs, self.costs, self.uncertainties])
+            cost_grads = None
+        elif cost_grads:
+            loss_grads = None   
+            softmax_grad = None
+            cost_grads = tape.gradient(planner_internal_costs, [self.costs, self.uncertainties])
+        return planner_internal_costs, loss, loss_grads, softmax_grad, cost_grads
 
     def get_data_from_pickle(self, file_num='1', batch_index=0):
         """
@@ -66,18 +89,16 @@ class DifferentiablePlanner(NNPlanner):
         d = pickle.load(open(path, 'rb'))
         start_configs = d['vehicle_state_nk3'][batch_index, 0, :]  # (3,)
         costmaps = d['costmap'][batch_index, :, :]  # (len_costmap, 4)
-        # Simulated network output -- ground truth costs + noise
-        costmaps[:, 3] = costmaps[:, 3] + np.random.rand(self.len_costmap)*self.noise
 
         return start_configs, costmaps
 
     def optimize(self, start_config):
         """ 
         Expects that the neural network will output a set of spline
-        trajectory samples (represented by their endpoints), their corresponding 
-        costs, and uncertainties. Incorporates this cost into the planner 
-        internal cost function and chooses the trajectory with 
-        the lowest planner internal cost.
+        trajectory samples (represented by their endpoints), their 
+        corresponding costs, and uncertainties. Incorporates this cost 
+        and uncertainty into the planner internal cost function and 
+        chooses the trajectory with the lowest planner internal cost.
         """
         print("\nINSIDE OPTIMIZE")
         p = self.params
@@ -92,23 +113,41 @@ class DifferentiablePlanner(NNPlanner):
         # nn_output_114 = model.predict_nn_output_with_postprocessing(processed_data['inputs'],
         #                                                             is_training=False)[:, None]
 
-        dummy_start_config, nn_output_n4 = self.get_data_from_pickle()
-        print("\nGOT DATA FROM PICKLE", dummy_start_config, nn_output_n4)
-        
-        uncertainties = self.get_uncertainties()
-        planner_internal_costs = self.planner_internal_cost(nn_output_n4[:, 3], uncertainties)
+        dummy_start_config, true_costmap_n4 = self.get_data_from_pickle()
+        print("\nGOT DATA FROM PICKLE: START CONFIG", dummy_start_config)
+        print("TRUE COSTMAP", true_costmap_n4)
 
-        print("\nCOSTMAP", nn_output_n4[:, 3])
+        # Ground truth trajectory will be the one that minimizes the ground 
+        # truth costs 
+        gt_min_idx = np.argmin(true_costmap_n4[:, 3])
+        gt_traj = np.zeros(self.len_costmap)
+        gt_traj[gt_min_idx] = 1.0  # One-hot vector
+        gt_traj = tf.convert_to_tensor(gt_traj)
+
+        print("\nGT TRAJ", gt_traj)
+
+        # Simulated network output -- ground truth costs + noise
+        nn_output_n4 = np.copy(true_costmap_n4)
+        nn_output_n4[:, 3] = nn_output_n4[:, 3] + self.pre_determined_noise #np.random.rand(self.len_costmap)*self.noise
+
+        uncertainties = self.get_uncertainties()
+        planner_internal_costs, loss, loss_grads, softmax_grad, cost_grads = \
+            self.planner_loss(gt_traj, nn_output_n4[:, 3], uncertainties)
+
+        print("\nNN COSTMAP", nn_output_n4[:, 3])
         print("\nUNCERTAINTIES", uncertainties)
         print("\nPLANNER INTERNAL COSTS", planner_internal_costs)
+        print("\nPLANNER LOSS", loss.numpy())
+        if loss_grads is not None:
+            print('\nPLANNER GRADIENTS', np.array([np.array(elem) for elem in loss_grads]))
+        if softmax_grad is not None:
+            print('\nSOFTMAX GRADIENTS', np.array([np.array(elem) for elem in softmax_grad]))
+        if cost_grads is not None:
+            print('\nCOST GRADIENTS', np.array([np.array(elem) for elem in cost_grads]))
 
         # Minimize the planner internal cost
         min_idx = tf.argmin(planner_internal_costs)
         min_cost = planner_internal_costs[min_idx]  # Just here for debugging
-
-        gt_min_idx = np.argmin(nn_output_n4[:, 3])
-        gt_traj = np.zeros(self.len_costmap)
-        gt_traj[gt_min_idx] = 1.0  # One-hot vector
         
         # Get the optimal trajectory
         # First transform waypoints to World Coordinates
@@ -137,14 +176,12 @@ class DifferentiablePlanner(NNPlanner):
         # Convert horizon in seconds to horizon in # of steps
         min_horizon = int(tf.ceil(horizons_s[idx, 0]/self.params.dt).numpy())
 
-        loss, grads = self.planner_loss(gt_traj, nn_output_n4[:, 3], uncertainties)
-
 
         data = {'system_config': dummy_start_sys_config,
                 'waypoint_config': SystemConfig.copy(self.opt_waypt),
                 'min_planner_internal_cost': min_cost.numpy(),
                 'planner_loss': loss.numpy(),
-                'planner_gradients': np.array(grads),
+                'planner_gradients': loss.numpy(), #np.array([np.array(elem) for elem in loss_grads]),
                 'trajectory': Trajectory.copy(self.opt_traj),
                 'spline_trajectory': Trajectory.copy(trajectories_spline),
                 'planning_horizon': min_horizon,
