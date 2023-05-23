@@ -38,7 +38,7 @@ class Simulator(SimulatorHelper):
         # TODO (sdeglurkar): These are actually differentiable planner params 
         # only but keeping them here temporarily
         p.planner_params.diff_planner_uncertainty_weight = 1.0
-        p.planner_params.diff_planner_softmax_temperature = 1.0
+        p.planner_params.diff_planner_softmax_temperature = 0.5
         p.planner_params.len_costmap = 10
  
         return p

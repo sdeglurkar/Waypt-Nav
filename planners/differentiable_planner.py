@@ -4,7 +4,7 @@ import tensorflow as tf
 from planners.nn_planner import NNPlanner
 from trajectory.trajectory import Trajectory, SystemConfig
 
-EPSILON = 0.0001
+EPSILON = 1e-10
 PLOTTING_CLIP_VALUE = 50
 
 class DifferentiablePlanner(NNPlanner):
@@ -26,10 +26,10 @@ class DifferentiablePlanner(NNPlanner):
         self.costs = tfe.Variable(np.zeros((self.len_costmap)))
         self.uncertainties = tfe.Variable(np.zeros((self.len_costmap)))
 
-        self.pre_determined_uncertainties = \
-            tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
         # self.pre_determined_uncertainties = \
-        #     tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 20.0], dtype=tf.double)
+        #     tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
+        self.pre_determined_uncertainties = \
+            tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0], dtype=tf.double)
         self.pre_determined_noise = np.random.rand(self.len_costmap)*self.noise
         # self.pre_determined_noise = \
         #     tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0], dtype=tf.double)
@@ -39,7 +39,6 @@ class DifferentiablePlanner(NNPlanner):
         For now a dummy function that will just output random numbers, 
         should later be a function defined by the model.
         '''
-        # return tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
         return self.pre_determined_uncertainties
 
     def planner_loss(self, gt_traj, costmap, uncertainties):
@@ -58,18 +57,9 @@ class DifferentiablePlanner(NNPlanner):
             self.costs.assign(costmap)
             self.uncertainties.assign(uncertainties)
             planner_internal_costs = self.costs + self.theta * self.uncertainties
-            # softmax = tf.nn.softmax(-self.softmax_beta * planner_internal_costs)
-            # print("SOFTMAX NUMERATOR", tf.exp(-self.softmax_beta * planner_internal_costs))
-            # # softmax = tf.exp(-planner_internal_costs)/tf.reduce_sum(tf.exp(-planner_internal_costs))
-            # clipped_softmax = tf.clip_by_value(softmax, EPSILON, 1 - EPSILON)
-            # # clipped_softmax = softmax
-            # print("CLIPPED SOFTMAX, LOG", clipped_softmax, tf.log(clipped_softmax))
-            # loss = tf.reduce_mean(-tf.reduce_sum(gt_traj * tf.log(clipped_softmax)))  # softmax cross-entropy
-            # # loss = tf.losses.softmax_cross_entropy(gt_traj, -planner_internal_costs)
-            clipped_softmax = tf.exp(-self.softmax_beta * planner_internal_costs)/   \
-                                    tf.reduce_sum(tf.exp(-self.softmax_beta * planner_internal_costs))
-            print("CLIPPED SOFTMAX", clipped_softmax)
-            loss = -tf.reduce_sum(gt_traj * tf.log(clipped_softmax))
+            softmax = tf.nn.softmax(-self.softmax_beta * planner_internal_costs)
+            clipped_softmax = tf.clip_by_value(softmax, EPSILON, 1 - EPSILON)
+            loss = -tf.reduce_sum(gt_traj * tf.log(clipped_softmax)) # softmax cross-entropy
         if loss_grads_bool:
             loss_grads = tape.gradient(loss, [clipped_softmax, planner_internal_costs, self.costs, self.uncertainties])
             softmax_grad = None
@@ -82,6 +72,31 @@ class DifferentiablePlanner(NNPlanner):
             loss_grads = None   
             softmax_grad = None
             cost_grads = tape.gradient(planner_internal_costs, [self.costs, self.uncertainties])
+        
+
+        print("\nDouble-checking gradient calculation analytically")
+        softmax_numerator = tf.exp(-self.softmax_beta * planner_internal_costs)
+        denom = tf.reduce_sum(softmax_numerator)
+        print("Softmax numerator", softmax_numerator)
+        print("Denom", denom)
+        gt_planner_internal_cost = tf.reduce_sum(gt_traj * planner_internal_costs)
+        exp_gt_index = tf.exp(-self.softmax_beta * gt_planner_internal_cost)
+        print("Exp gt index", exp_gt_index)
+        gt_softmax = tf.reduce_sum(gt_traj * clipped_softmax)
+        dloss_dsoftmax = -(1/gt_softmax)
+        dsoftmax_dplannerintcost = (-self.softmax_beta * exp_gt_index) * \
+                                    (denom - exp_gt_index) / (denom * denom)
+        print("dloss/dsoftmax:", dloss_dsoftmax)
+        print("dsoftmax/dplannerintcost:", dsoftmax_dplannerintcost)
+        gradient_wrt_uncertainty_gt = self.theta * self.softmax_beta * \
+                                    (denom - exp_gt_index)/denom  # Simplified
+        gradient_wrt_uncertainty_non_gt = -self.theta * self.softmax_beta * \
+                                    softmax_numerator / denom  # Simplified
+        print("Gradient wrt uncertainty, ground truth: ", gradient_wrt_uncertainty_gt)
+        print("And that should be the product of dloss/dsoftmax and dsoftmax/dplannerintcost and theta:", 
+                        self.theta * dloss_dsoftmax * dsoftmax_dplannerintcost)
+        print("Gradient wrt uncertainty, non ground truth: ", gradient_wrt_uncertainty_non_gt)
+
         
         # Loss_grads should be equal to d_loss/d_softmax * d_softmax/d_planner_internal_costs * 
         # d_planner_internal_costs/d_uncertainties
@@ -189,7 +204,7 @@ class DifferentiablePlanner(NNPlanner):
 
         if loss_grads is not None:
             self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
-                                    planner_internal_costs, clipped_softmax, min_idx, loss_grads[-1])
+                                    planner_internal_costs, loss_grads[-1])
 
 
         data = {'system_config': dummy_start_sys_config,
@@ -206,8 +221,7 @@ class DifferentiablePlanner(NNPlanner):
         return data
 
     def visualize_gradients(self, true_costmap, nn_costmap, uncertainties, 
-                            planner_internal_costs, clipped_softmax, gt_index, 
-                            uncertainty_gradients):
+                            planner_internal_costs, uncertainty_gradients):
         import matplotlib.pyplot as plt
         true_costmap = np.clip(true_costmap, 0, PLOTTING_CLIP_VALUE)
         nn_costmap = np.clip(nn_costmap, 0, PLOTTING_CLIP_VALUE)
@@ -257,28 +271,6 @@ class DifferentiablePlanner(NNPlanner):
         plt.xlabel("Indices")
         plt.ylabel("Values")
         plt.savefig('uncertainty_gradients.png')
-
-        print("Double-checking gradient calculation analytically")
-        denom = tf.reduce_sum(tf.exp(-self.softmax_beta * planner_internal_costs))
-        print("DENOM", denom)
-        exp_gt_index = tf.exp(-self.softmax_beta * planner_internal_costs[gt_index])
-        softmax_numerator = tf.exp(-self.softmax_beta * planner_internal_costs)
-        print("SOFTMAX NUMERATOR", softmax_numerator)
-        blah = tf.exp(-self.softmax_beta * planner_internal_costs)/   \
-                                    tf.reduce_sum(tf.exp(-self.softmax_beta * planner_internal_costs))
-        print("CLIPPED SOFTMAX", blah, tf.log(blah))
-        # gradient_wrt_uncertainty_gt = (-(self.theta/clipped_softmax[gt_index]) * \
-        #     (-self.softmax_beta * exp_gt_index) * (denom - exp_gt_index)) / (denom * denom)
-        # gradient_wrt_uncertainty_non_gt = -(self.theta/clipped_softmax[gt_index]) * \
-        #     (-exp_gt_index) * (-self.softmax_beta * softmax_numerator) / (denom * denom)
-        gradient_wrt_uncertainty_gt = self.theta * self.softmax_beta * (denom - exp_gt_index)/denom
-        gradient_wrt_uncertainty_non_gt = -self.theta * self.softmax_beta * softmax_numerator / denom
-        print("Gradient wrt uncertainty, ground truth: ", gradient_wrt_uncertainty_gt)
-        # print("Terms of gradient, ground truth: ", -(self.theta/clipped_softmax[gt_index]), 
-        #     (-self.softmax_beta * exp_gt_index) * (denom - exp_gt_index),
-        #     (denom * denom))
-        print("Gradient wrt uncertainty, non ground truth: ", gradient_wrt_uncertainty_non_gt)
-        
 
     @staticmethod
     def empty_data_dict():
