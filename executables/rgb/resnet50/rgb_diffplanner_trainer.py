@@ -5,7 +5,8 @@ import os
 
 class RGBDiffPlannerTrainer(VisualNavigationTrainer):
     """
-    Create a trainer that regress on the optimal waypoint using rgb images.
+    Only purpose of this executable is to run the DifferentiablePlanner 
+    at test time (using the trained costmap model).
     """
     simulator_name = 'RGB_Resnet50_NN_Waypoint_Simulator'
 
@@ -19,7 +20,6 @@ class RGBDiffPlannerTrainer(VisualNavigationTrainer):
         """
         from planners.differentiable_planner import DifferentiablePlanner
 
-        print("\nMODIFYING PLANNER\n")
         p.planner_params.planner = DifferentiablePlanner
         p.planner_params.model = self.model
 
