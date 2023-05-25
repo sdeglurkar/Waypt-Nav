@@ -1,4 +1,5 @@
 from math import exp
+import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from planners.nn_planner import NNPlanner
@@ -19,29 +20,51 @@ class DifferentiablePlanner(NNPlanner):
         self.softmax_beta = self.params.diff_planner_softmax_temperature
         self.len_costmap = self.params.len_costmap
         self.uncertainty_amount = 1.0
-        self.noise = 0.25
+        self.noise = 0.0
         self.waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
 
         tfe = tf.contrib.eager
         self.costs = tfe.Variable(np.zeros((self.len_costmap)))
         self.uncertainties = tfe.Variable(np.zeros((self.len_costmap)))
 
-        # self.pre_determined_uncertainties = \
-        #     tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
         self.pre_determined_uncertainties = \
-            tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0], dtype=tf.double)
+            tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
         self.pre_determined_noise = np.random.rand(self.len_costmap)*self.noise
-        # self.pre_determined_noise = \
-        #     tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0], dtype=tf.double)
 
-    def get_uncertainties(self):
+    def get_uncertainties(self, mode='random', nn_costs=None):
         '''
-        For now a dummy function that will just output random numbers, 
+        For now a dummy function that will just output some hand-coded numbers, 
         should later be a function defined by the model.
         '''
-        return self.pre_determined_uncertainties
+        if mode == 'random':
+            uncertainties = self.pre_determined_uncertainties
+        elif mode == 'uniform':
+            uncertainties = \
+                tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=tf.double)
+        elif mode == 'high_on_gt':
+            uncertainties = \
+                tf.constant([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0], dtype=tf.double)
+        elif mode == 'low_on_gt':
+            uncertainties = \
+                tf.constant([5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 1.0], dtype=tf.double)
+        elif mode == 'high_on_non_gt':
+            uncertainties = \
+                tf.constant([1.0, 1.0, 1.0, 1.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=tf.double)
+        elif mode == 'high_for_low_cost':
+            assert nn_costs is not None
+            multiplier = 1.0
+            uncertainties = np.array([multiplier/elem for elem in nn_costs])
+            uncertainties = tf.constant(uncertainties, dtype=tf.double)
+        elif mode == 'proportional_to_cost':
+            assert nn_costs is not None
+            multiplier = 1.0
+            uncertainties = np.array([multiplier * elem for elem in nn_costs])
+            uncertainties = tf.constant(uncertainties, dtype=tf.double)
+        else:
+            raise Exception("Unknown uncertainty mode!")
+        return uncertainties
 
-    def planner_loss(self, gt_traj, costmap, uncertainties):
+    def planner_loss(self, gt_traj, costmap, uncertainties, desired_gradient, analytical=False):
         '''
         We're not actually training the planner but this is important
         for the definition of the planner gradient.
@@ -50,9 +73,6 @@ class DifferentiablePlanner(NNPlanner):
         candidate samples' NN-provided costs and uncertainties are given by 
         'costmap' and 'uncertainties'.
         '''
-        loss_grads_bool = True
-        softmax_grad_bool = False
-        cost_grads_bool = False
         with tf.GradientTape() as tape:
             self.costs.assign(costmap)
             self.uncertainties.assign(uncertainties)
@@ -60,47 +80,41 @@ class DifferentiablePlanner(NNPlanner):
             softmax = tf.nn.softmax(-self.softmax_beta * planner_internal_costs)
             clipped_softmax = tf.clip_by_value(softmax, EPSILON, 1 - EPSILON)
             loss = -tf.reduce_sum(gt_traj * tf.log(clipped_softmax)) # softmax cross-entropy
-        if loss_grads_bool:
-            loss_grads = tape.gradient(loss, [clipped_softmax, planner_internal_costs, self.costs, self.uncertainties])
-            softmax_grad = None
-            cost_grads = None
-        elif softmax_grad_bool:
-            loss_grads = None
-            softmax_grad = tape.gradient(clipped_softmax, [planner_internal_costs, self.costs, self.uncertainties])
-            cost_grads = None
-        elif cost_grads_bool:
-            loss_grads = None   
-            softmax_grad = None
-            cost_grads = tape.gradient(planner_internal_costs, [self.costs, self.uncertainties])
+        if desired_gradient == 'loss_grads':
+            grads = tape.gradient(loss, [clipped_softmax, planner_internal_costs, self.costs, self.uncertainties])
+        elif desired_gradient == 'softmax_grads':
+            grads = tape.gradient(clipped_softmax, [planner_internal_costs, self.costs, self.uncertainties])
+        elif desired_gradient == 'cost_grads':
+            grads = tape.gradient(planner_internal_costs, [self.costs, self.uncertainties])
         
-
-        print("\nDouble-checking gradient calculation analytically")
-        softmax_numerator = tf.exp(-self.softmax_beta * planner_internal_costs)
-        denom = tf.reduce_sum(softmax_numerator)
-        print("Softmax numerator", softmax_numerator)
-        print("Denom", denom)
-        gt_planner_internal_cost = tf.reduce_sum(gt_traj * planner_internal_costs)
-        exp_gt_index = tf.exp(-self.softmax_beta * gt_planner_internal_cost)
-        print("Exp gt index", exp_gt_index)
-        gt_softmax = tf.reduce_sum(gt_traj * clipped_softmax)
-        dloss_dsoftmax = -(1/gt_softmax)
-        dsoftmax_dplannerintcost = (-self.softmax_beta * exp_gt_index) * \
-                                    (denom - exp_gt_index) / (denom * denom)
-        print("dloss/dsoftmax:", dloss_dsoftmax)
-        print("dsoftmax/dplannerintcost:", dsoftmax_dplannerintcost)
-        gradient_wrt_uncertainty_gt = self.theta * self.softmax_beta * \
-                                    (denom - exp_gt_index)/denom  # Simplified
-        gradient_wrt_uncertainty_non_gt = -self.theta * self.softmax_beta * \
-                                    softmax_numerator / denom  # Simplified
-        print("Gradient wrt uncertainty, ground truth: ", gradient_wrt_uncertainty_gt)
-        print("And that should be the product of dloss/dsoftmax and dsoftmax/dplannerintcost and theta:", 
-                        self.theta * dloss_dsoftmax * dsoftmax_dplannerintcost)
-        print("Gradient wrt uncertainty, non ground truth: ", gradient_wrt_uncertainty_non_gt)
+        if analytical:
+            print("\nDouble-checking gradient calculation analytically")
+            softmax_numerator = tf.exp(-self.softmax_beta * planner_internal_costs)
+            denom = tf.reduce_sum(softmax_numerator)
+            print("Softmax numerator", softmax_numerator)
+            print("Denom", denom)
+            gt_planner_internal_cost = tf.reduce_sum(gt_traj * planner_internal_costs)
+            exp_gt_index = tf.exp(-self.softmax_beta * gt_planner_internal_cost)
+            print("Exp gt index", exp_gt_index)
+            gt_softmax = tf.reduce_sum(gt_traj * clipped_softmax)
+            dloss_dsoftmax = -(1/gt_softmax)
+            dsoftmax_dplannerintcost = (-self.softmax_beta * exp_gt_index) * \
+                                        (denom - exp_gt_index) / (denom * denom)
+            print("dloss/dsoftmax:", dloss_dsoftmax)
+            print("dsoftmax/dplannerintcost:", dsoftmax_dplannerintcost)
+            gradient_wrt_uncertainty_gt = self.theta * self.softmax_beta * \
+                                        (denom - exp_gt_index)/denom  # Simplified
+            gradient_wrt_uncertainty_non_gt = -self.theta * self.softmax_beta * \
+                                        softmax_numerator / denom  # Simplified
+            print("Gradient wrt uncertainty, ground truth: ", gradient_wrt_uncertainty_gt)
+            print("And that should be the product of dloss/dsoftmax and dsoftmax/dplannerintcost and theta:", 
+                            self.theta * dloss_dsoftmax * dsoftmax_dplannerintcost)
+            print("Gradient wrt uncertainty, non ground truth: ", gradient_wrt_uncertainty_non_gt)
 
         
         # Loss_grads should be equal to d_loss/d_softmax * d_softmax/d_planner_internal_costs * 
         # d_planner_internal_costs/d_uncertainties
-        return planner_internal_costs, clipped_softmax, loss, loss_grads, softmax_grad, cost_grads
+        return planner_internal_costs, loss, grads
 
     def get_data_from_pickle(self, file_num='1', batch_index=0):
         """
@@ -117,6 +131,90 @@ class DifferentiablePlanner(NNPlanner):
         costmaps = d['costmap'][batch_index, :, :]  # (len_costmap, 4)
 
         return start_configs, costmaps
+    
+    def get_gradient_one_data_point(self, file_num='1', batch_index=0, 
+                                    uncertainty_mode='random', desired_gradient='loss_grads'):
+        '''
+        This function is given one data point from the dataset of ground 
+        truth costmaps. It simulates the neural network output from that
+        and then computes the planner gradient. This is a dummy implementation;
+        eventually the simulated NN output should be replaced by the real NN
+        output.
+        '''
+        dummy_start_config, true_costmap_n4 = self.get_data_from_pickle(file_num, batch_index)
+        # print("\nGOT DATA FROM PICKLE: START CONFIG", dummy_start_config)
+        # print("TRUE COSTMAP", true_costmap_n4)
+
+        # Ground truth trajectory will be the one that minimizes the ground 
+        # truth costs 
+        gt_min_idx = np.argmin(true_costmap_n4[:, 3])
+        gt_traj = np.zeros(self.len_costmap)
+        gt_traj[gt_min_idx] = 1.0  # One-hot vector
+        gt_traj = tf.convert_to_tensor(gt_traj)
+
+        # print("\nGT TRAJ", gt_traj)
+
+        # Simulated network output -- ground truth costs + noise
+        nn_output_n4 = np.copy(true_costmap_n4)
+        nn_output_n4[:, 3] = nn_output_n4[:, 3] + self.pre_determined_noise 
+
+        uncertainties = self.get_uncertainties(uncertainty_mode, nn_costs=nn_output_n4[:, 3])
+        planner_internal_costs, loss, grads = \
+            self.planner_loss(gt_traj, nn_output_n4[:, 3], uncertainties, desired_gradient)
+        
+        gradients = np.array([np.array(elem) for elem in grads])
+        norm_of_grad_uncertainty = np.linalg.norm(gradients[-1])  # Norm of gradient wrt uncertainty
+
+        # print("\nNN COSTMAP", nn_output_n4[:, 3])
+        # print("\nUNCERTAINTIES", uncertainties)
+        # print("\nPLANNER INTERNAL COSTS", planner_internal_costs)
+        # print("\nPLANNER LOSS", loss.numpy())
+        # if desired_gradient == 'loss_grads':
+        #     print('\nPLANNER GRADIENTS', gradients)
+        # if desired_gradient == 'softmax_grads':
+        #     print('\nSOFTMAX GRADIENTS', gradients)
+        # if desired_gradient == 'cost_grads':
+        #     print('\nCOST GRADIENTS', gradients)
+        # print("\nNORM OF GRAD UNCERTAINTY", norm_of_grad_uncertainty)
+
+        return dummy_start_config, true_costmap_n4, nn_output_n4, uncertainties, \
+            planner_internal_costs, loss, gradients, norm_of_grad_uncertainty
+
+    def get_gradients_dataset(self, num_data_points, per_file, num_files=70, 
+                            uncertainty_mode='random', desired_gradient='loss_grads'):
+        '''
+        Calls get_gradient_one_data_point on multiple file and batch numbers
+        num_data_points: The total number of data points the gradient 
+                        computation is desired for
+        per_file: How many data points should come from each file
+        num_files: The total number of files available
+        uncertainty_mode: The type of hand-coded uncertainty scheme
+        '''
+        losses = []
+        gradients_list = []
+        gradient_norms = []
+        gradient_on_gts = []
+        gradient_on_non_gts = []
+        num_files_to_sample_from = int(num_data_points/per_file) 
+        file_indices = np.random.choice(np.arange(1, num_files + 1), num_files_to_sample_from, replace=False)
+        num_batches = 1000   # hard-coded value -- saves the effort of loading every pickle file to check
+        for file_index in file_indices:
+            batch_indices = np.random.choice(num_batches, per_file, replace=False)
+            for batch_index in batch_indices:
+                dummy_start_config, true_costmap_n4, nn_output_n4, \
+                uncertainties, planner_internal_costs, loss, \
+                gradients, norm_of_grad_uncertainty = \
+                    self.get_gradient_one_data_point(str(file_index), batch_index, \
+                                                    uncertainty_mode, desired_gradient)
+                # print("\nPlanner Internal Costs", planner_internal_costs)
+                # TODO (sdeglurkar): Unclean code -- assuming that GT index is -1
+                losses.append(loss.numpy())
+                gradients_list.append(gradients[-1])
+                gradient_norms.append(norm_of_grad_uncertainty)
+                gradient_on_gts.append(gradients[-1][-1])
+                gradient_on_non_gts.append(np.linalg.norm(gradients[-1][:-1]))
+        
+        return losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts
 
     def optimize(self, start_config):
         """ 
@@ -139,37 +237,9 @@ class DifferentiablePlanner(NNPlanner):
         # nn_output_114 = model.predict_nn_output_with_postprocessing(processed_data['inputs'],
         #                                                             is_training=False)[:, None]
 
-        dummy_start_config, true_costmap_n4 = self.get_data_from_pickle()
-        print("\nGOT DATA FROM PICKLE: START CONFIG", dummy_start_config)
-        print("TRUE COSTMAP", true_costmap_n4)
-
-        # Ground truth trajectory will be the one that minimizes the ground 
-        # truth costs 
-        gt_min_idx = np.argmin(true_costmap_n4[:, 3])
-        gt_traj = np.zeros(self.len_costmap)
-        gt_traj[gt_min_idx] = 1.0  # One-hot vector
-        gt_traj = tf.convert_to_tensor(gt_traj)
-
-        print("\nGT TRAJ", gt_traj)
-
-        # Simulated network output -- ground truth costs + noise
-        nn_output_n4 = np.copy(true_costmap_n4)
-        nn_output_n4[:, 3] = nn_output_n4[:, 3] + self.pre_determined_noise #np.random.rand(self.len_costmap)*self.noise
-
-        uncertainties = self.get_uncertainties()
-        planner_internal_costs, clipped_softmax, loss, loss_grads, softmax_grad, cost_grads = \
-            self.planner_loss(gt_traj, nn_output_n4[:, 3], uncertainties)
-
-        print("\nNN COSTMAP", nn_output_n4[:, 3])
-        print("\nUNCERTAINTIES", uncertainties)
-        print("\nPLANNER INTERNAL COSTS", planner_internal_costs)
-        print("\nPLANNER LOSS", loss.numpy())
-        if loss_grads is not None:
-            print('\nPLANNER GRADIENTS', np.array([np.array(elem) for elem in loss_grads]))
-        if softmax_grad is not None:
-            print('\nSOFTMAX GRADIENTS', np.array([np.array(elem) for elem in softmax_grad]))
-        if cost_grads is not None:
-            print('\nCOST GRADIENTS', np.array([np.array(elem) for elem in cost_grads]))
+        dummy_start_config, true_costmap_n4, nn_output_n4, \
+            uncertainties, planner_internal_costs, loss, \
+            gradients, norm_of_grad_uncertainty = self.get_gradient_one_data_point()
 
         # Minimize the planner internal cost
         min_idx = tf.argmin(planner_internal_costs)
@@ -202,16 +272,24 @@ class DifferentiablePlanner(NNPlanner):
         # Convert horizon in seconds to horizon in # of steps
         min_horizon = int(tf.ceil(horizons_s[idx, 0]/self.params.dt).numpy())
 
-        if loss_grads is not None:
-            self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
-                                    planner_internal_costs, loss_grads[-1])
+        # Visualize gradient wrt uncertainty
+        self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
+                                    planner_internal_costs, gradients[-1])
+        
+        num_data_points = 1000
+        per_file = 50
+        losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts = \
+                            self.get_gradients_dataset(num_data_points, per_file, \
+                                                        uncertainty_mode='proportional_to_cost')
 
-
+        self.visualize_dataset_gradients(losses, gradients_list, gradient_norms, 
+                                        gradient_on_gts, gradient_on_non_gts)
+        
         data = {'system_config': dummy_start_sys_config,
                 'waypoint_config': SystemConfig.copy(self.opt_waypt),
                 'min_planner_internal_cost': min_cost.numpy(),
                 'planner_loss': loss.numpy(),
-                'planner_gradients': loss.numpy(), #np.array([np.array(elem) for elem in loss_grads]),
+                'planner_gradients': gradients,
                 'trajectory': Trajectory.copy(self.opt_traj),
                 'spline_trajectory': Trajectory.copy(trajectories_spline),
                 'planning_horizon': min_horizon,
@@ -222,7 +300,6 @@ class DifferentiablePlanner(NNPlanner):
 
     def visualize_gradients(self, true_costmap, nn_costmap, uncertainties, 
                             planner_internal_costs, uncertainty_gradients):
-        import matplotlib.pyplot as plt
         true_costmap = np.clip(true_costmap, 0, PLOTTING_CLIP_VALUE)
         nn_costmap = np.clip(nn_costmap, 0, PLOTTING_CLIP_VALUE)
         planner_internal_costs = np.clip(planner_internal_costs, 0, PLOTTING_CLIP_VALUE)
@@ -271,6 +348,73 @@ class DifferentiablePlanner(NNPlanner):
         plt.xlabel("Indices")
         plt.ylabel("Values")
         plt.savefig('uncertainty_gradients.png')
+    
+    def visualize_dataset_gradients(self, losses, gradients_list, gradient_norms, gradient_on_gts, 
+                                    gradient_on_non_gts):
+        
+        plt.figure(figsize=(10, 11))
+        plt.hist(losses)
+        plt.title("Losses")
+        plt.xlabel("Value")
+        plt.ylabel("Frequency")
+        plt.savefig('losses.png')
+
+        all_ind_grad_mean = np.mean(gradients_list, axis=0)
+        all_ind_grad_std = np.std(gradients_list, axis=0)
+
+        plt.figure(figsize=(10, 11))
+        plt.bar(np.arange(len(all_ind_grad_mean)), all_ind_grad_mean)
+        plt.title("Gradients Per Index, Mean")
+        plt.xlabel("Indices")
+        plt.ylabel("Gradient Mean")
+        plt.savefig('all_ind_grad_mean.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.bar(np.arange(len(all_ind_grad_mean)), all_ind_grad_std)
+        plt.title("Gradients Per Index, Standard Deviation")
+        plt.xlabel("Indices")
+        plt.ylabel("Gradient Std")
+        plt.savefig('all_ind_grad_std.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.hist(gradient_norms)
+        plt.title("Gradient Norms")
+        plt.xlabel("Value")
+        plt.ylabel("Frequency")
+        plt.savefig('gradient_norms.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.hist(gradient_on_gts)
+        plt.title("Gradients on Ground Truth")
+        plt.xlabel("Value")
+        plt.ylabel("Frequency")
+        plt.savefig('gradient_on_gt.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.hist(gradient_on_non_gts)
+        plt.title("Gradients on Non Ground Truth")
+        plt.xlabel("Value")
+        plt.ylabel("Frequency")
+        plt.savefig('gradient_on_non_gts.png')
+
+        loss_mean = np.mean(losses)
+        loss_std = np.std(losses)
+        grad_mean = np.mean(gradient_norms)
+        grad_std = np.std(gradient_norms)
+        gradient_on_gts_mean = np.mean(gradient_on_gts)
+        gradient_on_gts_std = np.std(gradient_on_gts)
+        gradient_on_non_gts_mean = np.mean(gradient_on_non_gts)
+        gradient_on_non_gts_std = np.std(gradient_on_non_gts)
+        print("\nLOSS MEAN", loss_mean)
+        print("\nLOSS STD", loss_std)
+        print("\nALL INDICES GRADIENT MEAN", all_ind_grad_mean)
+        print("\nALL INDICES GRADIENT STD", all_ind_grad_std)
+        print("\nGRADIENT MEAN", grad_mean)
+        print("\nGRADIENT STD", grad_std)
+        print("\nGRADIENT ON GT MEAN", gradient_on_gts_mean)
+        print("\nGRADIENT ON GT STD", gradient_on_gts_std)
+        print("\nGRADIENT ON NON GTS MEAN", gradient_on_non_gts_mean)
+        print("\nGRADIENT ON NON GTS STD", gradient_on_non_gts_std)
 
     @staticmethod
     def empty_data_dict():
