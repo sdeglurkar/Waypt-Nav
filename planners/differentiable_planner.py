@@ -17,9 +17,11 @@ class DifferentiablePlanner(NNPlanner):
         self.softmax_beta = self.params.diff_planner_softmax_temperature
         self.epsilon = self.params.diff_planner_softmax_epsilon
         self.len_costmap = self.params.len_costmap
+        self.plotting_clip_value = self.params.diff_planner_plotting_clip_value 
+        self.data_path = self.params.diff_planner_data_path
+        self.waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
         self.uncertainty_amount = 1.0
         self.noise = 0.0
-        self.waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
 
         tfe = tf.contrib.eager
         self.costs = tfe.Variable(np.zeros((self.len_costmap)))
@@ -28,9 +30,32 @@ class DifferentiablePlanner(NNPlanner):
         self.pre_determined_uncertainties = \
             tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
         self.pre_determined_noise = np.random.rand(self.len_costmap)*self.noise
- 
-        self.plotting_clip_value = self.params.diff_planner_plotting_clip_value 
-        self.data_path = self.params.diff_planner_data_path
+
+        self.analytical_gradient_computation = True 
+        if self.analytical_gradient_computation:
+            try:  # If file exists, clear it 
+                f = open("analytical_gradient.txt")
+                f.close()
+                f = open("analytical_gradient.txt", "w")  # Clear contents of file
+            except FileNotFoundError:
+                f = open("analytical_gradient.txt","a")  # Create file
+            
+            self.analytical_file = f
+            self.analytical_i = 0
+            self.max_len_analytical_file = 100
+        
+        self.one_pt_gradient = True 
+        if self.one_pt_gradient:
+            try:  # If file exists, clear it 
+                f = open("one_pt_gradient.txt")
+                f.close()
+                f = open("one_pt_gradient.txt", "w")  # Clear contents of file
+            except FileNotFoundError:
+                f = open("one_pt_gradient.txt","a")  # Create file
+            
+            self.one_pt_gradient_file = f
+            self.one_pt_gradient_i = 0
+            self.max_len_one_pt_gradient_file = 100
 
     def get_uncertainties(self, mode='random', nn_costs=None):
         '''
@@ -65,7 +90,7 @@ class DifferentiablePlanner(NNPlanner):
             raise Exception("Unknown uncertainty mode!")
         return uncertainties
 
-    def planner_loss(self, gt_traj, costmap, uncertainties, desired_gradient, analytical=True):
+    def planner_loss(self, gt_traj, costmap, uncertainties, desired_gradient):
         '''
         We're not actually training the planner but this is important
         for the definition of the planner gradient.
@@ -82,45 +107,40 @@ class DifferentiablePlanner(NNPlanner):
             clipped_softmax = tf.clip_by_value(softmax, self.epsilon, 1 - self.epsilon)
             loss = -tf.reduce_sum(gt_traj * tf.log(clipped_softmax)) # softmax cross-entropy
         if desired_gradient == 'loss_grads':
-            grads = tape.gradient(loss, [clipped_softmax, planner_internal_costs, self.costs, self.uncertainties])
+            grads = tape.gradient(loss, [clipped_softmax, planner_internal_costs, self.costs, \
+                                        self.uncertainties])
         elif desired_gradient == 'softmax_grads':
             grads = tape.gradient(clipped_softmax, [planner_internal_costs, self.costs, self.uncertainties])
         elif desired_gradient == 'cost_grads':
             grads = tape.gradient(planner_internal_costs, [self.costs, self.uncertainties])
         
-        if analytical:
-            try:
-                f = open("analytical_gradient.txt")
-                f.close()
-                f = open("analytical_gradient.txt", "w")  # Clear contents of file
-            except FileNotFoundError:
-                print("File not found!")
-                f = open("analytical_gradient.txt","a")  # Create file
-                
-            f.write("\n\nDouble-checking gradient calculation analytically")
+        if self.analytical_gradient_computation and self.analytical_i < self.max_len_analytical_file:    
+            self.analytical_file.write("\n\nDouble-checking gradient calculation analytically")
             softmax_numerator = tf.exp(-self.softmax_beta * planner_internal_costs)
             denom = tf.reduce_sum(softmax_numerator)
-            f.write("\nSoftmax numerator " + str(softmax_numerator))
-            f.write("\nDenom " + str(denom))
+            self.analytical_file.write("\nSoftmax numerator " + str(softmax_numerator))
+            self.analytical_file.write("\nDenom " + str(denom))
             gt_planner_internal_cost = tf.reduce_sum(gt_traj * planner_internal_costs)
             exp_gt_index = tf.exp(-self.softmax_beta * gt_planner_internal_cost)
-            f.write("\nExp gt index " + str(exp_gt_index))
+            self.analytical_file.write("\nExp gt index " + str(exp_gt_index))
             gt_softmax = tf.reduce_sum(gt_traj * clipped_softmax)
             dloss_dsoftmax = -(1/gt_softmax)
             dsoftmax_dplannerintcost = (-self.softmax_beta * exp_gt_index) * \
                                         (denom - exp_gt_index) / (denom * denom)
-            f.write("\ndloss/dsoftmax: " + str(dloss_dsoftmax))
-            f.write("\ndsoftmax/dplannerintcost: " + str(dsoftmax_dplannerintcost))
+            self.analytical_file.write("\ndloss/dsoftmax: " + str(dloss_dsoftmax))
+            self.analytical_file.write("\ndsoftmax/dplannerintcost: " + str(dsoftmax_dplannerintcost))
             gradient_wrt_uncertainty_gt = self.theta * self.softmax_beta * \
                                         (denom - exp_gt_index)/denom  # Simplified
             gradient_wrt_uncertainty_non_gt = -self.theta * self.softmax_beta * \
                                         softmax_numerator / denom  # Simplified
-            f.write("\nGradient wrt uncertainty, ground truth: " + str(gradient_wrt_uncertainty_gt))
-            f.write("\nAnd that should be the product of dloss/dsoftmax and dsoftmax/dplannerintcost and theta: " + 
-                            str(self.theta * dloss_dsoftmax * dsoftmax_dplannerintcost))
-            f.write("\nGradient wrt uncertainty, non ground truth: " + str(gradient_wrt_uncertainty_non_gt))
-            f.close()
-
+            self.analytical_file.write("\nGradient wrt uncertainty, ground truth: " + \
+                                        str(gradient_wrt_uncertainty_gt))
+            self.analytical_file.write("\nAnd that should be the product of dloss/dsoftmax " + \
+                                        "and dsoftmax/dplannerintcost and theta: " + 
+                                        str(self.theta * dloss_dsoftmax * dsoftmax_dplannerintcost))
+            self.analytical_file.write("\nGradient wrt uncertainty, non ground truth: " + \
+                                        str(gradient_wrt_uncertainty_non_gt))
+            self.analytical_i += 1  # Don't want too many elements in this file 
         
         # Loss_grads should be equal to d_loss/d_softmax * d_softmax/d_planner_internal_costs * 
         # d_planner_internal_costs/d_uncertainties
@@ -171,20 +191,22 @@ class DifferentiablePlanner(NNPlanner):
         gradients = np.array([np.array(elem) for elem in grads])
         norm_of_grad_uncertainty = np.linalg.norm(gradients[-1])  # Norm of gradient wrt uncertainty
 
-        # print("\nGOT DATA FROM PICKLE: START CONFIG", dummy_start_config)
-        # print("TRUE COSTMAP", true_costmap_n4)
-        # print("\nGT TRAJ", gt_traj)
-        # print("\nNN COSTMAP", nn_output_n4[:, 3])
-        # print("\nUNCERTAINTIES", uncertainties)
-        # print("\nPLANNER INTERNAL COSTS", planner_internal_costs)
-        # print("\nPLANNER LOSS", loss.numpy())
-        # if desired_gradient == 'loss_grads':
-        #     print('\nPLANNER GRADIENTS', gradients)
-        # if desired_gradient == 'softmax_grads':
-        #     print('\nSOFTMAX GRADIENTS', gradients)
-        # if desired_gradient == 'cost_grads':
-        #     print('\nCOST GRADIENTS', gradients)
-        # print("\nNORM OF GRAD UNCERTAINTY", norm_of_grad_uncertainty)
+        if self.one_pt_gradient and self.one_pt_gradient_i < self.max_len_one_pt_gradient_file:    
+            self.one_pt_gradient_file.write("\n\nGot data from pickle: Start config: " + \
+                                            str(dummy_start_config))
+            self.one_pt_gradient_file.write("\nTrue costmap: " + str(true_costmap_n4))
+            self.one_pt_gradient_file.write("\nGround truth traj: " + str(gt_traj))
+            self.one_pt_gradient_file.write("\nNN Costmap: " + str(nn_output_n4[:, 3]))
+            self.one_pt_gradient_file.write("\nUncertainties: " + str(uncertainties))
+            self.one_pt_gradient_file.write("\nPlanner internal costs: " + str(planner_internal_costs))
+            self.one_pt_gradient_file.write("\nPlanner loss: " + str(loss.numpy()))
+            if desired_gradient == 'loss_grads':
+                self.one_pt_gradient_file.write("\nPlanner gradients: " + str(gradients))
+            if desired_gradient == 'softmax_grads':
+                self.one_pt_gradient_file.write("\nSoftmax gradients: " + str(gradients))
+            if desired_gradient == 'cost_grads':
+                self.one_pt_gradient_file.write("\nCost gradients: " + str(gradients))
+            self.one_pt_gradient_file.write("\nNorm of grad uncertainty: " + str(norm_of_grad_uncertainty))
 
         return dummy_start_config, true_costmap_n4, nn_output_n4, uncertainties, \
             planner_internal_costs, loss, gradients, norm_of_grad_uncertainty
@@ -213,11 +235,11 @@ class DifferentiablePlanner(NNPlanner):
                 _, _, _, _, _, loss, gradients, norm_of_grad_uncertainty = \
                     self.get_gradient_one_data_point(str(file_index), batch_index, \
                                                     uncertainty_mode, desired_gradient)
-                # TODO (sdeglurkar): Unclean code -- assuming that GT index is -1
+                # Assumes that ground truth index is -1!
                 losses.append(loss.numpy())
-                gradients_list.append(gradients[-1])
+                gradients_list.append(gradients[-1])  # Gradient wrt uncertainty
                 gradient_norms.append(norm_of_grad_uncertainty)
-                gradient_on_gts.append(gradients[-1][-1])
+                gradient_on_gts.append(gradients[-1][-1]) # Gradient wrt uncertainty, ground truth index
                 gradient_on_non_gts.append(np.linalg.norm(gradients[-1][:-1]))
         
         return losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts
@@ -230,22 +252,24 @@ class DifferentiablePlanner(NNPlanner):
         and uncertainty into the planner internal cost function and 
         chooses the trajectory with the lowest planner internal cost.
         """
-        print("\nINSIDE OPTIMIZE")
-        p = self.params
-
-        model = p.model
-
         # For now, start_config is unused!
-
-        # Get the costmap
-        # raw_data = self._raw_data(start_config)
-        # processed_data = model.create_nn_inputs_and_outputs(raw_data)
-        # nn_output_114 = model.predict_nn_output_with_postprocessing(processed_data['inputs'],
-        #                                                             is_training=False)[:, None]
 
         dummy_start_config, true_costmap_n4, nn_output_n4, \
             uncertainties, planner_internal_costs, loss, \
             gradients, _ = self.get_gradient_one_data_point()
+        
+        # Visualize gradient wrt uncertainty
+        self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
+                                    planner_internal_costs, gradients[-1])
+        
+        num_data_points = 1000
+        per_file = 50
+        losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts = \
+                            self.get_gradients_dataset(num_data_points, per_file, \
+                                                        uncertainty_mode='proportional_to_cost')
+
+        self.visualize_dataset_gradients(losses, gradients_list, gradient_norms, 
+                                        gradient_on_gts, gradient_on_non_gts)
 
         # Minimize the planner internal cost
         min_idx = tf.argmin(planner_internal_costs)
@@ -277,19 +301,6 @@ class DifferentiablePlanner(NNPlanner):
 
         # Convert horizon in seconds to horizon in # of steps
         min_horizon = int(tf.ceil(horizons_s[idx, 0]/self.params.dt).numpy())
-
-        # Visualize gradient wrt uncertainty
-        self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
-                                    planner_internal_costs, gradients[-1])
-        
-        num_data_points = 1000
-        per_file = 50
-        losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts = \
-                            self.get_gradients_dataset(num_data_points, per_file, \
-                                                        uncertainty_mode='proportional_to_cost')
-
-        self.visualize_dataset_gradients(losses, gradients_list, gradient_norms, 
-                                        gradient_on_gts, gradient_on_non_gts)
         
         data = {'system_config': dummy_start_sys_config,
                 'waypoint_config': SystemConfig.copy(self.opt_waypt),
