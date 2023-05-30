@@ -34,6 +34,15 @@ class Simulator(SimulatorHelper):
         p.episode_horizon = int(np.ceil(p.episode_horizon_s / dt))
         p.control_horizon = int(np.ceil(p.control_horizon_s / dt))
         p.dt = dt
+
+        # These are actually differentiable planner params 
+        # only but keeping them here 
+        p.planner_params.diff_planner_uncertainty_weight = 1.0
+        p.planner_params.diff_planner_softmax_temperature = 1.0
+        p.planner_params.len_costmap = 10
+        p.planner_params.diff_planner_softmax_epsilon = 1e-10
+        p.planner_params.diff_planner_plotting_clip_value = 50
+        p.planner_params.diff_planner_data_path = '/home/ext_drive/sampada_deglurkar/costmap_data/'
  
         return p
 

@@ -150,7 +150,7 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
                 number_tests = self.p.test.number_tests
 
             # TODO (sdeglurkar) Hack! Setting this to True again because it gets set to False somewhere else
-            self.p.test.simulate_expert = True
+            self.p.test.simulate_expert = False
             # Optionally initialize the Expert Simulator to be tested
             if self.p.test.simulate_expert:
                 expert_simulator_params = self.p.simulator_params
