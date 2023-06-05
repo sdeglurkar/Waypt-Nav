@@ -43,6 +43,7 @@ class Simulator(SimulatorHelper):
         p.planner_params.diff_planner_softmax_epsilon = 1e-10
         p.planner_params.diff_planner_plotting_clip_value = 50
         p.planner_params.diff_planner_data_path = '/home/ext_drive/sampada_deglurkar/costmap_data/'
+        p.planner_params.diff_planner_finite_diff_delta = 0.1
  
         return p
 
