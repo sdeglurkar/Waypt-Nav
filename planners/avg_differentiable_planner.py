@@ -1,4 +1,5 @@
 from math import exp
+from matplotlib import cm
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -92,6 +93,33 @@ class AvgDifferentiablePlanner(NNPlanner):
         else:
             raise Exception("Unknown uncertainty mode!")
         return uncertainties
+    
+    def get_cost_of_a_waypoint(self, start_config, waypoint):
+        '''
+        From the given start_config
+        '''
+        pos_nk2 = np.reshape(start_config[:2], (1, 1, 2))  
+        head_nk1 = np.reshape(start_config[2], (1, 1, 1))
+        start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
+                                        position_nk2=pos_nk2,
+                                        heading_nk1=head_nk1)
+
+        # First transform waypoint to World Coordinates
+        pos_nk2 = np.reshape(waypoint[:, :2], (1, 1, 2))
+        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
+        head_nk1 = np.reshape(waypoint[:, 2], (1, 1, 1))
+        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
+        waypoint_config = SystemConfig(dt=self.params.dt, n=1, k=1,
+                                        position_nk2=pos_nk2,
+                                        heading_nk1=head_nk1)
+        waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
+        self.params.system_dynamics.to_world_coordinates(start_sys_config,
+                                                        waypoint_config,
+                                                        waypoint_world_config)
+        # Now retrieve Control Pipeline data
+        obj_val, data = self.eval_objective(start_sys_config, waypoint_world_config)
+
+        return obj_val.numpy(), data
 
     def get_gradient_cost_wrt_plan(self, waypoint, start_config):
         '''
@@ -105,36 +133,22 @@ class AvgDifferentiablePlanner(NNPlanner):
          [cost(waypoint + delta) - cost(waypoint - delta)] / 2*|delta|
         for delta being a perturbation in x, y, and theta directions.
         '''
-        # Get the SystemConfig for the start_config
-        pos_nk2 = np.reshape(start_config[:2], (1, 1, 2))  
-        head_nk1 = np.reshape(start_config[2], (1, 1, 1))
-        start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                           position_nk2=pos_nk2,
-                                           heading_nk1=head_nk1)
-
         # Generate all the perturbations to 'waypoint' -- in x, y, and theta
         deltas = [np.eye(3)[:, 0], np.eye(3)[:, 1], np.eye(3)[:, 2]]
         deltas = [self.finite_differencing_delta * elem for elem in deltas] 
+        deltas = [elem.reshape((3, 1)) for elem in deltas]
         perturbed_waypoints = []
         for delta in deltas:
             perturbed_waypoints.append(waypoint + delta)
             perturbed_waypoints.append(waypoint - delta)
         
+        print("\nPerturbed waypoints:", perturbed_waypoints)
+        
         # Generate the costs for all perturbations
         perturbed_costs = []
         for perturbed_waypoint in perturbed_waypoints:
-            pos_nk2 = np.reshape(perturbed_waypoint[:2, :], (1, 1, 2))  
-            head_nk1 = np.reshape(perturbed_waypoint[2, :], (1, 1, 1))  
-            perturbed_waypoint_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                                    position_nk2=pos_nk2,
-                                                    heading_nk1=head_nk1)
-            perturbed_waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
-            self.params.system_dynamics.to_world_coordinates(start_sys_config,
-                                                         perturbed_waypoint_config,
-                                                         perturbed_waypoint_world_config)
-            obj_val, data = self.eval_objective(start_sys_config, perturbed_waypoint_world_config)
-            # waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
-            perturbed_costs.append(obj_val.numpy())
+            obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(perturbed_waypoint, (1, 3)))
+            perturbed_costs.append(obj_val)
 
         cost_grads = []
         i = 0
@@ -142,10 +156,13 @@ class AvgDifferentiablePlanner(NNPlanner):
             numerator = perturbed_costs[i + 1] - perturbed_costs[i]
             denominator = self.finite_differencing_delta * 2
             cost_grads.append(numerator/denominator)
+            print("\nCost grad:", numerator, denominator, numerator/denominator)
             i += 2
         
-        cost_grad = tf.convert_to_tensor(cost_grads)  # [1, 3]
-        return cost_grad
+        cost_grad = tf.convert_to_tensor(np.reshape(cost_grads, (1, 3)), dtype=tf.double)  # [1, 3]
+        print("\nCost grads vector:", cost_grad)
+
+        return cost_grad, perturbed_waypoints, perturbed_costs 
 
     def planner_loss(self, start_config, costmap, uncertainties):
         '''
@@ -160,40 +177,72 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         First computes the derivative of the output plan with respect to uncertainty.
         Then multiplies this value by the derivative of the task cost with respect
-        to the plan.
+        to the plan. The final derivative is of the task cost with respect to 
+        uncertainty.
         '''
-        with tf.GradientTape() as tape:
-            self.costs.assign(costmap)
-            self.uncertainties.assign(uncertainties)
-            self.candidate_waypoints.assign(costmap[:, :3])
+        self.costs.assign(costmap[:, 3])
+        self.uncertainties.assign(uncertainties)
+        self.candidate_waypoints.assign(costmap[:, :3])
 
+        # Compute the same thing 3 times, once for x, y, and theta dimensions
+        # Why: TF v1 has no jacobian operator implemented -- have to take gradients 3 times
+        # Also tape.gradient cannot be used multiple times within a context
+        with tf.GradientTape() as tape:
             # Take the weighted average of the candidate waypoints
             weights = self.costs + self.theta * self.uncertainties
-            inverse_weights = tf.divide(1.0, weights)
+            inverse_weights = tf.reshape(tf.divide(1.0, weights), [self.len_costmap, 1])
+            print("\nWeights, inverse weights:", weights, inverse_weights)
+            numerator = tf.matmul(tf.transpose(self.candidate_waypoints), inverse_weights)
+            print("\nNumerator:", tf.transpose(self.candidate_waypoints), numerator)
+            denominator = tf.reduce_sum(inverse_weights)
+            waypoint = tf.divide(numerator, denominator)
+            print("\nWaypoint:", waypoint, denominator)
+        
+            #grads = tape.gradient(waypoint, [self.candidate_waypoints, self.costs, self.uncertainties])
+            grads_x = tape.gradient(waypoint[0], self.uncertainties)  # (10,)
+        
+        with tf.GradientTape() as tape:
+            # Take the weighted average of the candidate waypoints
+            weights = self.costs + self.theta * self.uncertainties
+            inverse_weights = tf.reshape(tf.divide(1.0, weights), [self.len_costmap, 1])
             numerator = tf.matmul(tf.transpose(self.candidate_waypoints), inverse_weights)
             denominator = tf.reduce_sum(inverse_weights)
             waypoint = tf.divide(numerator, denominator)
+        
+            grads_y = tape.gradient(waypoint[1], self.uncertainties)  # (10,)
+        
+        with tf.GradientTape() as tape:
+            # Take the weighted average of the candidate waypoints
+            weights = self.costs + self.theta * self.uncertainties
+            inverse_weights = tf.reshape(tf.divide(1.0, weights), [self.len_costmap, 1])
+            numerator = tf.matmul(tf.transpose(self.candidate_waypoints), inverse_weights)
+            denominator = tf.reduce_sum(inverse_weights)
+            waypoint = tf.divide(numerator, denominator)
+        
+            grads_theta = tape.gradient(waypoint[2], self.uncertainties)  # (10,)
 
-            grads = tape.gradient(waypoint, [self.candidate_waypoints, self.costs, self.uncertainties])
-            cost_grad = self.get_gradient_cost_wrt_plan(waypoint.numpy(), start_config)
-            final_grads = tf.matmul(cost_grad, grads[-1])
+        jacobian = tf.stack([grads_x, grads_y, grads_theta])  # (3, 10)
+        print("\nJacobian:", jacobian)
+        cost_grad, perturbed_waypoints, perturbed_costs = \
+            self.get_gradient_cost_wrt_plan(waypoint.numpy(), start_config)
+        final_grads = tf.matmul(cost_grad, jacobian)  # (1, len_costmap)
+        print("\nFinal grads:", final_grads, cost_grad, jacobian)
         
         if self.analytical_gradient_computation and self.analytical_i < self.max_len_analytical_file: 
             # Analytical gradient for derivative of output plan wrt uncertainty only 
             self.analytical_file.write("\n\nDouble-checking gradient calculation analytically")
-            self.analytical_file.write("\nEach row of the Jacobian should be the same")
-            inverse_weights_squared = tf.divide(1.0, inverse_weights) 
-            waypoint_repeated = tf.tile(waypoint, [1, self.len_costmap])
-            difference_term = waypoint_repeated - tf.transpose(self.candidate_waypoints)
+            inverse_weights_squared = tf.multiply(inverse_weights, inverse_weights) 
+            waypoint_repeated = tf.tile(waypoint, [1, self.len_costmap])  # [3, 10]
+            difference_term = waypoint_repeated - tf.transpose(self.candidate_waypoints)  # [3, 10]
             multiplication_term = tf.divide(self.theta * inverse_weights_squared, denominator) 
             self.analytical_file.write("\nMultiplication term: " + str(multiplication_term))
             self.analytical_file.write("\nDifference term: " + str(difference_term))
-            final_value = tf.multiply(difference_term, multiplication_term)
+            final_value = tf.multiply(difference_term, tf.squeeze(multiplication_term, axis=1))
             self.analytical_file.write("\nFinal value: " + str(final_value))
 
             self.analytical_i += 1  # Don't want too many elements in this file 
         
-        return waypoint.numpy(), grads, cost_grad, final_grads 
+        return waypoint.numpy(), jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs 
 
     def get_data_from_pickle(self, file_num='1', batch_index=0):
         """
@@ -227,10 +276,10 @@ class AvgDifferentiablePlanner(NNPlanner):
         nn_output_n4[:, 3] = nn_output_n4[:, 3] + self.pre_determined_noise 
 
         uncertainties = self.get_uncertainties(uncertainty_mode, nn_costs=nn_output_n4[:, 3])
-        plan, grads, cost_grad, final_grads = \
+        plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
             self.planner_loss(dummy_start_config, nn_output_n4, uncertainties)
         
-        gradients = np.array([np.array(elem) for elem in grads])
+        gradients = jacobian
 
         if self.one_pt_gradient and self.one_pt_gradient_i < self.max_len_one_pt_gradient_file:    
             self.one_pt_gradient_file.write("\n\nGot data from pickle: Start config: " + \
@@ -244,7 +293,7 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nFinal gradients: " + str(final_grads))
 
         return dummy_start_config, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, gradients, cost_grad, final_grads
+                plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs
 
     # def get_gradients_dataset(self, num_data_points, per_file, num_files=70, 
     #                         uncertainty_mode='random', desired_gradient='loss_grads'):
@@ -283,14 +332,17 @@ class AvgDifferentiablePlanner(NNPlanner):
         """ 
         Expects that the neural network will output a set of spline
         trajectory samples (represented by their endpoints), their 
-        corresponding costs, and uncertainties. Incorporates this cost 
-        and uncertainty into the planner internal cost function and 
-        chooses the trajectory with the lowest planner internal cost.
+        corresponding costs, and uncertainties. The planner incorporates 
+        this cost and uncertainty to choose a plan. 
         """
         # For now, start_config is unused!
 
         dummy_start_config, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, gradients, cost_grad, final_grads = self.get_gradient_one_data_point()
+                plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
+                self.get_gradient_one_data_point()
+        
+        self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,
+                                perturbed_waypoints, perturbed_costs)
         
         # Visualize gradient wrt uncertainty
         # self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
@@ -307,24 +359,9 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         
         # Get the optimal trajectory
-        # First transform waypoints to World Coordinates
-        pos_nk2 = np.reshape(plan[:2, :], (1, 1, 2))  
-        head_nk1 = np.reshape(plan[2, :], (1, 1, 1))  
-        plan_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                                position_nk2=pos_nk2,
-                                                heading_nk1=head_nk1)
-        pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
-        head_nk1 = np.reshape(dummy_start_config[2], (1, 1, 1))
-        dummy_start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                           position_nk2=pos_nk2,
-                                           heading_nk1=head_nk1)
-        self.params.system_dynamics.to_world_coordinates(dummy_start_sys_config,
-                                                         plan_config,
-                                                         self.waypoint_world_config)
-
-        # Now retrieve Control Pipeline data
-        _, data = self.eval_objective(dummy_start_sys_config, self.waypoint_world_config)
+        obj_val, data = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1,3)))
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
+        print("\nCost of plan:", obj_val)
 
         idx = 0  # 0 bc there's only one waypoint
         self.opt_waypt.assign_from_config_batch_idx(waypts, idx)  # Just here for debugging
@@ -333,17 +370,83 @@ class AvgDifferentiablePlanner(NNPlanner):
         # Convert horizon in seconds to horizon in # of steps
         min_horizon = int(tf.ceil(horizons_s[idx, 0]/self.params.dt).numpy())
 
-        
+
+        # To output in the metadata
+        pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
+        head_nk1 = np.reshape(dummy_start_config[2], (1, 1, 1))
+        dummy_start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
+                                           position_nk2=pos_nk2,
+                                           heading_nk1=head_nk1)
+        pos_nk2 = np.reshape(plan[:2, :], (1, 1, 2))  
+        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
+        head_nk1 = np.reshape(plan[2, :], (1, 1, 1))  
+        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
+        plan_config = SystemConfig(dt=self.params.dt, n=1, k=1,
+                                                position_nk2=pos_nk2,
+                                                heading_nk1=head_nk1)
+
         data = {'system_config': dummy_start_sys_config,
                 'waypoint_config': SystemConfig.copy(plan_config),
                 'planner_gradients': final_grads,
                 'trajectory': Trajectory.copy(self.opt_traj),
+                'cost_of_trajectory': obj_val,
                 'spline_trajectory': Trajectory.copy(trajectories_spline),
                 'planning_horizon': min_horizon,
                 'K_nkfd': controllers['K_nkfd'][idx:idx + 1],
                 'k_nkf1': controllers['k_nkf1'][idx:idx + 1]}
 
         return data
+    
+    def visualize_waypoints(self, start_config, costmap, uncertainties, plan,
+                            additional_waypoints, additional_costs):
+        '''
+        Plot a heatmap-style plot of various candidate waypoints and the plan
+        provided by the planner along with associated uncertainties and costs.
+        start_config: The current pose of the robot, needed to compute costs
+        costmap: (len_costmap, 3) The candidate waypoints provided by the NN
+        uncertainties: The uncertainties of the above candidate waypoints
+        plan: A waypoint. Provided by the planner
+        additional_waypoints
+        additional_costs (of the above additional_waypoints)
+        '''
+        plan = np.reshape(plan, (1,3))
+        additional_waypoints = [np.reshape(waypoint, (3,)) for waypoint in additional_waypoints]
+        additional_waypoints = np.stack(additional_waypoints)
+
+        # First get the costs of the candidate waypoints
+        candidate_waypoints_costs = []
+        for waypoint in costmap:
+            obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(waypoint, (1,3)))
+            candidate_waypoints_costs.append(obj_val[0])
+        
+        plan_cost, _ = self.get_cost_of_a_waypoint(start_config, plan)
+
+        candidate_waypoints_costs = np.stack(candidate_waypoints_costs)
+        plan_cost = plan_cost[0]
+        additional_costs = np.stack([cost[0] for cost in additional_costs])
+
+        total_waypoints = np.vstack([costmap, plan, additional_waypoints])
+        total_costs = np.hstack([candidate_waypoints_costs, plan_cost, additional_costs])
+        print(total_costs)
+
+        viridis = cm.get_cmap('coolwarm', len(total_costs))
+        sorted_costs = np.sort(total_costs)
+        print("\n\n\n\n\n\n\nSorted costs", sorted_costs)
+        sorted_costs_small = sorted_costs[sorted_costs < 100]
+        normalized_sorted_costs = np.copy(sorted_costs)
+        normalized_sorted_costs[sorted_costs < 100] /= sum(sorted_costs_small)
+        print(normalized_sorted_costs)
+        ind_sorted_costs = np.argsort(total_costs)
+        sorted_waypoints = total_waypoints[ind_sorted_costs]
+
+        plt.figure(figsize=(10, 11))
+        for i in range(len(sorted_waypoints)):
+            waypoint = sorted_waypoints[i]
+            if sorted_costs[i] > 100:
+                plt.plot(waypoint[0], waypoint[1], color='k', marker='o')
+            else:
+                plt.plot(waypoint[0], waypoint[1], color=viridis(normalized_sorted_costs[i]), marker='o')
+        plt.savefig('waypoints_heatmap.png')
 
     def visualize_gradients(self, true_costmap, nn_costmap, uncertainties, 
                             planner_internal_costs, uncertainty_gradients):
@@ -471,6 +574,7 @@ class AvgDifferentiablePlanner(NNPlanner):
                 'waypoint_config': [],
                 'planner_gradients': [],
                 'trajectory': [],
+                'cost_of_trajectory': [],
                 'spline_trajectory': [],
                 'planning_horizon': [],
                 'K_nkfd': [],
@@ -504,6 +608,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         data_last['waypoint_config'] = data['waypoint_config'][last_data_idx]
         data_last['planner_gradients'] = data['planner_gradients'][last_data_idx]
         data_last['trajectory'] = data['trajectory'][last_data_idx]
+        data_last['cost_of_trajectory'] = data['cost_of_trajectory'][last_data_idx]
         data_last['spline_trajectory'] = data['spline_trajectory'][last_data_idx]
         data_last['planning_horizon_n1'] = [data['planning_horizon'][last_data_idx]] 
         data_last['K_nkfd'] = data['K_nkfd'][last_data_idx]
@@ -514,6 +619,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         data['waypoint_config'] = SystemConfig.concat_across_batch_dim(np.array(data['waypoint_config'])[valid_mask])
         data['planner_gradients'] = np.array(data['planner_gradients'])[valid_mask]
         data['trajectory'] = Trajectory.concat_across_batch_dim(np.array(data['trajectory'])[valid_mask])
+        data['cost_of_trajectory'] = np.array(data['cost_of_trajectory'])[valid_mask]
         data['spline_trajectory'] = Trajectory.concat_across_batch_dim(np.array(data['spline_trajectory'])[valid_mask])
         data['planning_horizon_n1'] = np.array(data['planning_horizon'])[valid_mask][:, None]
         data['K_nkfd'] = tf.boolean_mask(tf.concat(data['K_nkfd'], axis=0), valid_mask)
@@ -533,6 +639,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         data_numpy['waypoint_config'] = data['waypoint_config'].to_numpy_repr()
         data_numpy['planner_gradients'] = data['planner_gradients']
         data_numpy['trajectory'] = data['trajectory'].to_numpy_repr()
+        data_numpy['cost_of_trajectory'] = data['cost_of_trajectory']
         data_numpy['spline_trajectory'] = data['spline_trajectory'].to_numpy_repr()
         data_numpy['planning_horizon_n1'] = data['planning_horizon_n1']
         data_numpy['K_nkfd'] = data['K_nkfd'].numpy()
