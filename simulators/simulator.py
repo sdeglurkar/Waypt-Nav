@@ -450,6 +450,7 @@ class Simulator(SimulatorHelper):
         self.obstacle_occupancy_grid = self.obstacle_map.create_occupancy_grid_for_map()
 
         if goal_pos_n2 is None:
+            print("\n\nGOAL CONFIG", self.goal_config.position_and_heading_nk3())
             goal_pos_n2 = self.goal_config.position_nk2()[0]
 
         return FmmMap.create_fmm_map_based_on_goal_position(
