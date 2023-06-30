@@ -332,8 +332,8 @@ class VisualNavigationTrainer(TrainerFrontendHelper):
         simulator.render(axs, freq=render_angle_freq, render_velocities=plot_controls,
                          prepend_title=prepend_title)
         
-        # if plot_images:
-            # self._plot_episode_images(i, data)
+        if plot_images:
+            self._plot_episode_images(i, data)
         
 
     def _save_trajectory_data(self, i, data):

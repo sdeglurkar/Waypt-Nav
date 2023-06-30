@@ -287,36 +287,12 @@ class AvgDifferentiablePlanner(NNPlanner):
                                            position_nk2=pos_nk2,
                                            heading_nk1=head_nk1)
         
-        # if not self.sampling_costs_planner_called:
-        #     print("Calling sampling costs planner", dummy_start_config)
-        #     all_waypoints_data = self.sampling_costs_planner.optimize(dummy_start_sys_config, 
-        #                                                                 num_desired_waypoints)
-        #     self.all_waypoint_configs = all_waypoints_data['all_waypoint_configs']
-        #     self.all_waypoint_costs = all_waypoints_data['all_waypoint_costs']
-        #     # num_desired_waypoints + 1, + 1 is for ground truth optimal waypoint
-        #     self.all_waypoint_ego_configs = self.all_waypoint_configs #SystemConfig(dt=self.params.dt, n=num_desired_waypoints+1, k=1)
-        #     # self.params.system_dynamics.to_egocentric_coordinates(dummy_start_sys_config,
-        #      #                                           self.all_waypoint_configs,
-        #      #                                           self.all_waypoint_ego_configs)
-
-        #     self.sampling_costs_planner_called = True
-
-        # # Build the full costmap
-        # all_waypoints_poses = self.all_waypoint_ego_configs.position_nk2().numpy()
-        # all_waypoints_headings = self.all_waypoint_ego_configs.heading_nk1().numpy()
-        # all_waypoints = [] 
-        # for i in range(len(all_waypoints_poses)):
-        #     waypoint_pos = all_waypoints_poses[i]
-        #     waypoint_heading = all_waypoints_headings[i]
-        #     cost = [[self.all_waypoint_costs[i]]]
-        #     waypoint = np.hstack([waypoint_pos, waypoint_heading, cost])
-        #     all_waypoints.append(waypoint)
-        
-        # full_costmap = np.squeeze(np.stack(all_waypoints)) 
+        data = self.sampling_planner.optimize(dummy_start_sys_config)
+        data = self.sampling_costs_planner.optimize(dummy_start_sys_config, num_desired_waypoints)
 
         obj_vals, data = self.eval_objective(dummy_start_sys_config)
         obj_vals = obj_vals.numpy()
-        print("Obj vals", obj_vals)
+        print("\n\nObj vals", obj_vals)
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
         waypts = waypts.position_and_heading_nk3().numpy()
         print(waypts)
@@ -326,6 +302,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         costs = obj_vals[full_costmap_indices]
         costs = np.expand_dims(costs, axis=1)
         full_costmap_n4 = np.hstack([full_costmap, costs])
+        print("Full costmap n4", full_costmap_n4[:30, :])
 
         if len(self.nn_costmap_subsampling_indices) == 0:
             self.nn_costmap_subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
@@ -407,35 +384,15 @@ class AvgDifferentiablePlanner(NNPlanner):
         """
         # For now, start_config is unused!
 
-        print("\n\nSTART CONFIG REAL", start_config.position_and_heading_nk3())
-        blah = np.squeeze(start_config.position_and_heading_nk3().numpy())
-
         dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
                 plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
-                self.get_gradient_one_data_point(dummy_start_config=[7.8, 18.9, 1.57])
-        
-        print(full_costmap_n4[100:120, :3])
-        print(full_costmap_n4[50:80, :3])
-        print(full_costmap_n4[800:830, :3])
-
-        pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
-        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
-        head_nk1 = np.reshape(dummy_start_config[2], (1, 1, 1))
-        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-        dummy_start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                           position_nk2=pos_nk2,
-                                           heading_nk1=head_nk1)
-
-        data = self.sampling_planner.optimize(dummy_start_sys_config)
+                self.get_gradient_one_data_point(dummy_start_config=[7.8, 18.9, 0.7])
 
         perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
         additional_waypoints = perturbed_waypoints.copy()
         additional_waypoints.extend(full_costmap_n4[:, :3])
         additional_costs = perturbed_costs.copy()
-        additional_costs.extend(self.all_waypoint_costs)
-
-        # dummy_obj_val, _ = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape([1.0, 10.0, 0], (1,3)))
-        # print("\n\n\n\n\nDUMMY OBJ VAL", dummy_obj_val)
+        additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
 
         display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
         self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,

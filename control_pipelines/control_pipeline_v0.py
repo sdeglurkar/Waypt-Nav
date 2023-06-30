@@ -65,7 +65,6 @@ class ControlPipelineV0(ControlPipelineBase):
         Return all the waypoints, corresponding spline horizons, LQR trajectories and controllers corresponding to the
         velocity_bin idx. This function is typically used during the expert planning.
         """
-        print("Planning to all waypoints")
         self.trajectories_world[idx] = self.system_dynamics.to_world_coordinates(start_config,
                                                                                  self.lqr_trajectories[idx],
                                                                                  self.trajectories_world[idx],
@@ -114,9 +113,7 @@ class ControlPipelineV0(ControlPipelineBase):
     def generate_control_pipeline(self, params=None):
         p = self.params
         # Initialize spline, cost function, lqr solver
-        print("Control pipeline generate_control_pipeline: Sampling egocentric waypoints")
         waypoints_egocentric = self._sample_egocentric_waypoints(vf=0.)
-        print("Egocentric waypoints", waypoints_egocentric.position_and_heading_nk3())
         self._init_pipeline()
         pipeline_data = self.helper.empty_data_dictionary()
 
@@ -196,7 +193,6 @@ class ControlPipelineV0(ControlPipelineBase):
         if not self.instance_variables_loaded:
             # Initialize a dictionary with keys corresponding to instance variables of the control pipeline and
             # values corresponding to empty lists
-            print("Inside load control pipeline")
             pipeline_data = self.helper.empty_data_dictionary()
             for v0, expected_filename in zip(self.start_velocities, self.pipeline_files):
                 filename = self._data_file_name(v0=v0)
@@ -205,7 +201,6 @@ class ControlPipelineV0(ControlPipelineBase):
                                                              discard_lqr_controller_data=self.params.discard_LQR_controller_data,
                                                              discard_precomputed_lqr_trajectories=self.params.discard_precomputed_lqr_trajectories,
                                                              track_trajectory_acceleration=self.params.track_trajectory_acceleration)
-                # print(data_bin['waypt_configs'].position_and_heading_nk3()[1000:1050])
                 self.helper.append_data_bin_to_pipeline_data(pipeline_data, data_bin)
             self._set_instance_variables(pipeline_data)
 

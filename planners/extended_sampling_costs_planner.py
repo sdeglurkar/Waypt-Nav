@@ -132,18 +132,27 @@ class ExtendedSamplingCostsPlanner(Planner):
             2. Evaluates the objective function on the resulting trajectories
             3. Return the minimum cost waypoint, trajectory, and cost
         """
-        print("Inside optimize", start_config.position_and_heading_nk3())
         obj_vals, data = self.eval_objective(start_config)
         min_idx = tf.argmin(obj_vals)
         min_cost = obj_vals[min_idx]
 
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
 
+        print("Inside optimize, extended sampling costs planner")
         print("\n\nSTART CONFIG", start_config.position_and_heading_nk3())
-        print("\n\nWAYPTS", waypts.position_and_heading_nk3()[:50] - start_config.position_and_heading_nk3())
-        print(waypts.position_and_heading_nk3()[200:220] - start_config.position_and_heading_nk3())
-        print(waypts.position_and_heading_nk3()[1000:1010] - start_config.position_and_heading_nk3())
-        print(waypts.position_and_heading_nk3()[2002:2030] - start_config.position_and_heading_nk3())
+        print("\n\nWAYPTS", waypts.position_and_heading_nk3()[:50])
+        print(waypts.position_and_heading_nk3()[200:220])
+        print(waypts.position_and_heading_nk3()[1000:1010])
+        print(waypts.position_and_heading_nk3()[2002:2030])
+        print("WAYPTS, EGO COORDS")
+        waypts_ego = Trajectory(dt=self.params.dt, n=waypts.n, k=waypts.k)
+        self.params.system_dynamics.to_egocentric_coordinates(start_config,
+                                                            waypts,
+                                                            waypts_ego)
+        print(waypts_ego.position_and_heading_nk3()[:50])
+        print(waypts_ego.position_and_heading_nk3()[200:220])
+        print(waypts_ego.position_and_heading_nk3()[1000:1010])
+        print(waypts_ego.position_and_heading_nk3()[2002:2030])
 
         self.opt_waypt.assign_from_config_batch_idx(waypts, min_idx)
         self.opt_traj.assign_from_trajectory_batch_idx(trajectories_lqr, min_idx)

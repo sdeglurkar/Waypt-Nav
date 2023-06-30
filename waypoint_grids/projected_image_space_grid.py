@@ -44,7 +44,6 @@ class ProjectedImageSpaceGrid(UniformSamplingGrid):
 
         params.bound_min = [x_min, y_min, params.bound_min[2]]
         params.bound_max = [x_max, y_max, params.bound_max[2]]
-        print("Compute image bounds", params.bound_min, params.bound_max)
         return params
 
     def sample_egocentric_waypoints(self, vf=0.):
@@ -52,7 +51,6 @@ class ProjectedImageSpaceGrid(UniformSamplingGrid):
         coordinates."""
         # Uniform sampling in the image space
         wx_n11, wy_n11, wtheta_n11 = self._compute_waypoint_meshgrid_n11()
-        print("Sample egocentric waypoints, meshgrid", wx_n11, wy_n11, wtheta_n11)
         vf_n11 = np.ones_like(wx_n11) * vf
         wf_n11 = np.zeros_like(wx_n11)
         # Project the (x, y, theta) points back in the world coordinates.
