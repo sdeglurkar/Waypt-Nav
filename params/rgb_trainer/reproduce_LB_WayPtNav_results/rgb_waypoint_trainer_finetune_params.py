@@ -75,7 +75,7 @@ def create_params():
     p.trainer.ckpt_path = '/home/sampada_deglurkar/Visual-Navigation-Release/sampada_wayptnav/session_2022-09-21_10-31-13/checkpoints/ckpt-110'
     
     # Change the data_dir
-    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/dummy_wayptnav_data']
+    p.data_creation.data_dir = ['/home/ext_drive/sampada_deglurkar/ddummy_wayptnav_data']
 
     # Seed for selecting the test scenarios and the number of such scenarios
     p.test.seed = 10

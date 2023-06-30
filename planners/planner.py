@@ -8,6 +8,7 @@ class Planner(object):
     through an environment. """
 
     def __init__(self, simulator, params):
+        print("INside planner init")
         self.simulator = simulator
         self.obj_fn = self.simulator.obj_fn
         self.params = params.planner.parse_params(params)

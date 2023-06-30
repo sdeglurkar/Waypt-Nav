@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from planners.extended_sampling_costs_planner import ExtendedSamplingCostsPlanner
+from planners.sampling_planner import SamplingPlanner
 from planners.nn_planner import NNPlanner
 from trajectory.trajectory import Trajectory, SystemConfig
 
@@ -43,6 +44,10 @@ class AvgDifferentiablePlanner(NNPlanner):
         # For getting an extended costmap of the environment
         self.sampling_costs_planner = ExtendedSamplingCostsPlanner(simulator, params)
         self.sampling_costs_planner_called = False  # Call it only once
+        self.sampling_planner = SamplingPlanner(simulator, params)
+
+        # Part of that costmap will be sampled to get the ground truth NN costmap
+        self.nn_costmap_subsampling_indices = []
 
         # Printing to files
         self.analytical_gradient_computation = True 
@@ -269,9 +274,9 @@ class AvgDifferentiablePlanner(NNPlanner):
     def get_true_costmap(self, dummy_start_config, num_desired_waypoints, len_costmap):
         '''
         Given a start config for the robot, generates the full ground truth costmap with
-        shape (num_desired_waypoints, 4) (4 for 3 + 1, where 3 is the dim of the waypoint).
-        It then subsamples len_costmap amount of those waypoints to provide as the NN
-        ground truth.
+        shape (num_desired_waypoints, 4) (4 for 3 + 1, where 3 is the dim of the waypoint
+        and 1 is the cost). It then subsamples len_costmap amount of those waypoints 
+        to provide as the NN ground truth.
         '''
         # First make the dummy_start_config a SystemConfig
         pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
@@ -282,34 +287,51 @@ class AvgDifferentiablePlanner(NNPlanner):
                                            position_nk2=pos_nk2,
                                            heading_nk1=head_nk1)
         
-        if not self.sampling_costs_planner_called:
-            all_waypoints_data = self.sampling_costs_planner.optimize(dummy_start_sys_config, 
-                                                                        num_desired_waypoints)
-            self.all_waypoint_configs = all_waypoints_data['all_waypoint_configs']
-            self.all_waypoint_costs = all_waypoints_data['all_waypoint_costs']
-            self.all_waypoint_ego_configs = SystemConfig(dt=self.params.dt, n=num_desired_waypoints+1, k=1)
-            self.params.system_dynamics.to_egocentric_coordinates(dummy_start_sys_config,
-                                                        self.all_waypoint_configs,
-                                                        self.all_waypoint_ego_configs)
+        # if not self.sampling_costs_planner_called:
+        #     print("Calling sampling costs planner", dummy_start_config)
+        #     all_waypoints_data = self.sampling_costs_planner.optimize(dummy_start_sys_config, 
+        #                                                                 num_desired_waypoints)
+        #     self.all_waypoint_configs = all_waypoints_data['all_waypoint_configs']
+        #     self.all_waypoint_costs = all_waypoints_data['all_waypoint_costs']
+        #     # num_desired_waypoints + 1, + 1 is for ground truth optimal waypoint
+        #     self.all_waypoint_ego_configs = self.all_waypoint_configs #SystemConfig(dt=self.params.dt, n=num_desired_waypoints+1, k=1)
+        #     # self.params.system_dynamics.to_egocentric_coordinates(dummy_start_sys_config,
+        #      #                                           self.all_waypoint_configs,
+        #      #                                           self.all_waypoint_ego_configs)
 
-            self.sampling_costs_planner_called = True
+        #     self.sampling_costs_planner_called = True
 
-        # Build the full costmap
-        all_waypoints_poses = self.all_waypoint_ego_configs.position_nk2().numpy()
-        all_waypoints_headings = self.all_waypoint_ego_configs.heading_nk1().numpy()
-        all_waypoints = [] 
-        for i in range(len(all_waypoints_poses)):
-            waypoint_pos = all_waypoints_poses[i]
-            waypoint_heading = all_waypoints_headings[i]
-            cost = [[self.all_waypoint_costs[i]]]
-            waypoint = np.hstack([waypoint_pos, waypoint_heading, cost])
-            all_waypoints.append(waypoint)
+        # # Build the full costmap
+        # all_waypoints_poses = self.all_waypoint_ego_configs.position_nk2().numpy()
+        # all_waypoints_headings = self.all_waypoint_ego_configs.heading_nk1().numpy()
+        # all_waypoints = [] 
+        # for i in range(len(all_waypoints_poses)):
+        #     waypoint_pos = all_waypoints_poses[i]
+        #     waypoint_heading = all_waypoints_headings[i]
+        #     cost = [[self.all_waypoint_costs[i]]]
+        #     waypoint = np.hstack([waypoint_pos, waypoint_heading, cost])
+        #     all_waypoints.append(waypoint)
         
-        full_costmap = np.squeeze(np.stack(all_waypoints)) 
-        subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
-        nn_costmap_true = full_costmap[subsampling_indices]
+        # full_costmap = np.squeeze(np.stack(all_waypoints)) 
 
-        return full_costmap, nn_costmap_true
+        obj_vals, data = self.eval_objective(dummy_start_sys_config)
+        obj_vals = obj_vals.numpy()
+        print("Obj vals", obj_vals)
+        waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
+        waypts = waypts.position_and_heading_nk3().numpy()
+        print(waypts)
+        full_costmap_indices = np.random.choice(len(waypts), num_desired_waypoints, replace=False)
+        full_costmap = np.squeeze(waypts[full_costmap_indices])
+        print("Full costmap", full_costmap[:30, :])
+        costs = obj_vals[full_costmap_indices]
+        costs = np.expand_dims(costs, axis=1)
+        full_costmap_n4 = np.hstack([full_costmap, costs])
+
+        if len(self.nn_costmap_subsampling_indices) == 0:
+            self.nn_costmap_subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
+        nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
+
+        return full_costmap_n4, nn_costmap_true
 
     
     def get_gradient_one_data_point(self, dummy_start_config, uncertainty_mode='random'):
@@ -385,10 +407,26 @@ class AvgDifferentiablePlanner(NNPlanner):
         """
         # For now, start_config is unused!
 
+        print("\n\nSTART CONFIG REAL", start_config.position_and_heading_nk3())
+        blah = np.squeeze(start_config.position_and_heading_nk3().numpy())
+
         dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
                 plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
-                self.get_gradient_one_data_point(dummy_start_config=[7.8+1.75, 18.9-1.0, 0.0+1.57])
-    
+                self.get_gradient_one_data_point(dummy_start_config=[7.8, 18.9, 1.57])
+        
+        print(full_costmap_n4[100:120, :3])
+        print(full_costmap_n4[50:80, :3])
+        print(full_costmap_n4[800:830, :3])
+
+        pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
+        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
+        head_nk1 = np.reshape(dummy_start_config[2], (1, 1, 1))
+        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
+        dummy_start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
+                                           position_nk2=pos_nk2,
+                                           heading_nk1=head_nk1)
+
+        data = self.sampling_planner.optimize(dummy_start_sys_config)
 
         perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
         additional_waypoints = perturbed_waypoints.copy()
@@ -399,8 +437,9 @@ class AvgDifferentiablePlanner(NNPlanner):
         # dummy_obj_val, _ = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape([1.0, 10.0, 0], (1,3)))
         # print("\n\n\n\n\nDUMMY OBJ VAL", dummy_obj_val)
 
+        display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
         self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,
-                                additional_waypoints, additional_costs)
+                                additional_waypoints, additional_costs, display_uncertainties)
         
         # Visualize gradient wrt uncertainty
         # self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
@@ -443,7 +482,7 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         data = {'system_config': dummy_start_sys_config,
                 'waypoint_config': SystemConfig.copy(plan_config),
-                'planner_gradients': final_grads,
+                'planner_gradients': tf.cast(final_grads, dtype=tf.double),
                 'trajectory': Trajectory.copy(self.opt_traj),
                 'cost_of_trajectory': obj_val,
                 'spline_trajectory': Trajectory.copy(trajectories_spline),
@@ -454,7 +493,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         return data
     
     def visualize_waypoints(self, start_config, costmap, uncertainties, plan,
-                            additional_waypoints, additional_costs):
+                            additional_waypoints, additional_costs, display_uncertainties=True):
         '''
         Plot a heatmap-style plot of various candidate waypoints and the plan
         provided by the planner along with associated uncertainties and costs.
@@ -498,23 +537,24 @@ class AvgDifferentiablePlanner(NNPlanner):
                 plt.plot(waypoint[0], waypoint[1], color='k', marker='o')
             else:
                 plt.plot(waypoint[0], waypoint[1], color=viridis(normalized_sorted_costs[i]), marker='o')
-        # ax = plt.axes()
-        # plt.axis([0, 3, 0, 3])
-        # circle = plt.Circle((1.0, 2.0), 0.5, fill = False)
-        # plt.gcf().add_patch(circle)
-        # ax.add_artist(circle)
-        # ax.autoscale()
-        for i in range(len(costmap)):
-            waypoint = costmap[i]
-            uncertainty = uncertainties[i].numpy()
-            # Plot a circle
-            angle = np.linspace(0, 2 * np.pi, 150) 
-            radius = uncertainty
-            x = radius * np.cos(angle) + waypoint[0]
-            y = radius * np.sin(angle) + waypoint[1]
-            plt.plot(x, y, 'k')
-            # circle = plt.Circle((waypoint[0], waypoint[1]), 0.25, fill = False)
-            # plt.gca().add_patch(circle)
+        if display_uncertainties:
+            # ax = plt.axes()
+            # plt.axis([0, 3, 0, 3])
+            # circle = plt.Circle((1.0, 2.0), 0.5, fill = False)
+            # plt.gcf().add_patch(circle)
+            # ax.add_artist(circle)
+            # ax.autoscale()
+            for i in range(len(costmap)):
+                waypoint = costmap[i]
+                uncertainty = uncertainties[i].numpy()
+                # Plot a circle
+                angle = np.linspace(0, 2 * np.pi, 150) 
+                radius = uncertainty
+                x = radius * np.cos(angle) + waypoint[0]
+                y = radius * np.sin(angle) + waypoint[1]
+                plt.plot(x, y, 'k')
+                # circle = plt.Circle((waypoint[0], waypoint[1]), 0.25, fill = False)
+                # plt.gca().add_patch(circle)
         plt.savefig('waypoints_heatmap.png')
 
     def visualize_gradients(self, true_costmap, nn_costmap, uncertainties, 
@@ -686,7 +726,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         # Get the main planner data
         data['system_config'] = SystemConfig.concat_across_batch_dim(np.array(data['system_config'])[valid_mask])
         data['waypoint_config'] = SystemConfig.concat_across_batch_dim(np.array(data['waypoint_config'])[valid_mask])
-        data['planner_gradients'] = np.array(data['planner_gradients'])[valid_mask]
+        data['planner_gradients'] = tf.boolean_mask(tf.concat(data['planner_gradients'], axis=0), valid_mask)
         data['trajectory'] = Trajectory.concat_across_batch_dim(np.array(data['trajectory'])[valid_mask])
         data['cost_of_trajectory'] = np.array(data['cost_of_trajectory'])[valid_mask]
         data['spline_trajectory'] = Trajectory.concat_across_batch_dim(np.array(data['spline_trajectory'])[valid_mask])
