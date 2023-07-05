@@ -29,7 +29,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)  
         
         # Uncertainty and noise schemes
-        self.uncertainty_amount = 0.5
+        self.uncertainty_amount = 0.1
         self.noise = 0.0
         self.pre_determined_uncertainties = \
             tf.random_uniform([self.len_costmap], dtype=tf.double) * self.uncertainty_amount
@@ -45,6 +45,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.sampling_costs_planner = ExtendedSamplingCostsPlanner(simulator, params)
         self.sampling_costs_planner_called = False  # Call it only once
         self.sampling_planner = SamplingPlanner(simulator, params)
+        # For controlling the size of that costmap
+        self.full_costmap_indices = []
 
         # Part of that costmap will be sampled to get the ground truth NN costmap
         self.nn_costmap_subsampling_indices = []
@@ -132,12 +134,14 @@ class AvgDifferentiablePlanner(NNPlanner):
         waypoint_config = SystemConfig(dt=self.params.dt, n=1, k=1,
                                         position_nk2=pos_nk2,
                                         heading_nk1=head_nk1)
-        waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
-        self.params.system_dynamics.to_world_coordinates(start_sys_config,
-                                                        waypoint_config,
-                                                        waypoint_world_config)
+        # waypoint_world_config = SystemConfig(dt=self.params.dt, n=1, k=1)
+        # self.params.system_dynamics.to_world_coordinates(start_sys_config,
+        #                                                 waypoint_config,
+        #                                                 waypoint_world_config)
+        
         # Now retrieve Control Pipeline data
-        obj_val, data = self.eval_objective(start_sys_config, waypoint_world_config)
+        # obj_val, data = self.eval_objective(start_sys_config, waypoint_world_config)
+        obj_val, data = self.eval_objective(start_sys_config, waypoint_config)
 
         return obj_val.numpy(), data
 
@@ -159,8 +163,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         deltas = [elem.reshape((3, 1)) for elem in deltas]
         perturbed_waypoints = []
         for delta in deltas:
-            perturbed_waypoints.append(waypoint + delta)
             perturbed_waypoints.append(waypoint - delta)
+            perturbed_waypoints.append(waypoint + delta)
         
         # Generate the costs for all perturbations
         perturbed_costs = []
@@ -287,28 +291,32 @@ class AvgDifferentiablePlanner(NNPlanner):
                                            position_nk2=pos_nk2,
                                            heading_nk1=head_nk1)
         
-        data = self.sampling_planner.optimize(dummy_start_sys_config)
-        data = self.sampling_costs_planner.optimize(dummy_start_sys_config, num_desired_waypoints)
+        # data = self.sampling_planner.optimize(dummy_start_sys_config)
+        # data = self.sampling_costs_planner.optimize(dummy_start_sys_config, num_desired_waypoints)
 
         obj_vals, data = self.eval_objective(dummy_start_sys_config)
         obj_vals = obj_vals.numpy()
-        print("\n\nObj vals", obj_vals)
+        optimal_cost = np.min(obj_vals)
+        optimal_cost_ind = np.argmin(obj_vals)
+        # print("\n\nObj vals", obj_vals)
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
         waypts = waypts.position_and_heading_nk3().numpy()
-        print(waypts)
-        full_costmap_indices = np.random.choice(len(waypts), num_desired_waypoints, replace=False)
-        full_costmap = np.squeeze(waypts[full_costmap_indices])
-        print("Full costmap", full_costmap[:30, :])
-        costs = obj_vals[full_costmap_indices]
+        optimal_waypoint = np.squeeze(waypts[optimal_cost_ind])
+        # print(waypts)
+        if len(self.full_costmap_indices) == 0:
+            self.full_costmap_indices = np.random.choice(len(waypts), num_desired_waypoints, replace=False)
+        full_costmap = np.squeeze(waypts[self.full_costmap_indices])
+        # print("Full costmap", full_costmap[:30, :])
+        costs = obj_vals[self.full_costmap_indices]
         costs = np.expand_dims(costs, axis=1)
         full_costmap_n4 = np.hstack([full_costmap, costs])
-        print("Full costmap n4", full_costmap_n4[:30, :])
+        # print("Full costmap n4", full_costmap_n4[:30, :])
 
         if len(self.nn_costmap_subsampling_indices) == 0:
             self.nn_costmap_subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
         nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
 
-        return full_costmap_n4, nn_costmap_true
+        return full_costmap_n4, nn_costmap_true, optimal_cost, optimal_waypoint
 
     
     def get_gradient_one_data_point(self, dummy_start_config, uncertainty_mode='random'):
@@ -317,9 +325,13 @@ class AvgDifferentiablePlanner(NNPlanner):
         ground truth costmap for that config. It then simulates the neural network 
         output from that and then computes the planner gradient. 
         '''
-        num_desired_waypoints = 1000 
-        full_costmap_n4, true_costmap_n4 = \
+        num_desired_waypoints = 10
+        full_costmap_n4, true_costmap_n4, optimal_cost, optimal_waypoint = \
             self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
+        
+        best_cost_costmap = np.min(true_costmap_n4[:, 3])
+        best_cost_ind_costmap = np.argmin(true_costmap_n4[:, 3])
+        best_waypoint_costmap = true_costmap_n4[best_cost_ind_costmap, :3]
 
         # Simulated network output -- ground truth costs + noise
         nn_output_n4 = np.copy(true_costmap_n4)
@@ -328,6 +340,9 @@ class AvgDifferentiablePlanner(NNPlanner):
         uncertainties = self.get_uncertainties(uncertainty_mode, nn_costs=nn_output_n4[:, 3])
         plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
             self.planner_loss(dummy_start_config, nn_output_n4, uncertainties)
+        
+        plan_cost, _ = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1,3)))
+        final_grads = np.squeeze(final_grads.numpy())
 
         if self.one_pt_gradient and self.one_pt_gradient_i < self.max_len_one_pt_gradient_file:    
             self.one_pt_gradient_file.write("\n\nStart config: " + str(dummy_start_config))
@@ -335,12 +350,17 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nNN Costmap: " + str(nn_output_n4))
             self.one_pt_gradient_file.write("\nUncertainties: " + str(uncertainties))
             self.one_pt_gradient_file.write("\nPlan: " + str(plan))
+            self.one_pt_gradient_file.write("\nPlan Cost: " + str(plan_cost[0]))
+            self.one_pt_gradient_file.write("\nOptimal Cost: " + str(optimal_cost))
+            self.one_pt_gradient_file.write("\nOptimal Plan: " + str(optimal_waypoint))
+            self.one_pt_gradient_file.write("\nOptimal Cost from NN Costmap: " + str(best_cost_costmap))
+            self.one_pt_gradient_file.write("\nOptimal Waypoint from NN Costmap: " + str(best_waypoint_costmap))
             self.one_pt_gradient_file.write("\nPlanner gradients: " + str(jacobian))
             self.one_pt_gradient_file.write("\nCost gradient: " + str(cost_grad))
             self.one_pt_gradient_file.write("\nFinal gradients: " + str(final_grads))
 
         return dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs
+                plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost
 
     # def get_gradients_dataset(self, num_data_points, per_file, num_files=70, 
     #                         uncertainty_mode='random', desired_gradient='loss_grads'):
@@ -384,9 +404,10 @@ class AvgDifferentiablePlanner(NNPlanner):
         """
         # For now, start_config is unused!
 
+        dummy_sc = [9.0, 18.0, 1.57] #[15.0, 7.5, 3.14] #[8.0, 23.0, 1.57] #[7.8, 18.9, 0.7]
         dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
-                self.get_gradient_one_data_point(dummy_start_config=[7.8, 18.9, 0.7])
+                plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost = \
+                self.get_gradient_one_data_point(dummy_start_config=dummy_sc)
 
         perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
         additional_waypoints = perturbed_waypoints.copy()
@@ -396,7 +417,7 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
         self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,
-                                additional_waypoints, additional_costs, display_uncertainties)
+                                additional_waypoints, additional_costs, final_grads, display_uncertainties)
         
         # Visualize gradient wrt uncertainty
         # self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
@@ -450,7 +471,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         return data
     
     def visualize_waypoints(self, start_config, costmap, uncertainties, plan,
-                            additional_waypoints, additional_costs, display_uncertainties=True):
+                            additional_waypoints, additional_costs, gradients, 
+                            display_uncertainties=True, display_gradients=True):
         '''
         Plot a heatmap-style plot of various candidate waypoints and the plan
         provided by the planner along with associated uncertainties and costs.
@@ -478,6 +500,7 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         total_waypoints = np.vstack([costmap, plan, additional_waypoints])
         total_costs = np.hstack([candidate_waypoints_costs, plan_cost, additional_costs])
+        # print("Total costs", total_costs)
 
         viridis = cm.get_cmap('coolwarm', len(total_costs))
         sorted_costs = np.sort(total_costs)
@@ -504,12 +527,18 @@ class AvgDifferentiablePlanner(NNPlanner):
             for i in range(len(costmap)):
                 waypoint = costmap[i]
                 uncertainty = uncertainties[i].numpy()
+                uncertainty_gradient = gradients[i]
                 # Plot a circle
                 angle = np.linspace(0, 2 * np.pi, 150) 
                 radius = uncertainty
+                to_adjust_radius = uncertainty - uncertainty_gradient
                 x = radius * np.cos(angle) + waypoint[0]
                 y = radius * np.sin(angle) + waypoint[1]
                 plt.plot(x, y, 'k')
+                if display_gradients and to_adjust_radius > 0:
+                    x = to_adjust_radius * np.cos(angle) + waypoint[0]
+                    y = to_adjust_radius * np.sin(angle) + waypoint[1]
+                    plt.plot(x, y, 'g')
                 # circle = plt.Circle((waypoint[0], waypoint[1]), 0.25, fill = False)
                 # plt.gca().add_patch(circle)
         plt.savefig('waypoints_heatmap.png')
