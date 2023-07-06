@@ -8,6 +8,9 @@ from planners.sampling_planner import SamplingPlanner
 from planners.nn_planner import NNPlanner
 from trajectory.trajectory import Trajectory, SystemConfig
 
+NUM_DESIRED_WAYPOINTS = 10
+DISPLAY_GRADIENTS = True  
+DUMMY_SC = [8.5, 18.95, 3.14]
 
 class AvgDifferentiablePlanner(NNPlanner):
     """ A sampling-based planner that is differentiable with respect 
@@ -325,7 +328,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         ground truth costmap for that config. It then simulates the neural network 
         output from that and then computes the planner gradient. 
         '''
-        num_desired_waypoints = 10
+        num_desired_waypoints = NUM_DESIRED_WAYPOINTS
         full_costmap_n4, true_costmap_n4, optimal_cost, optimal_waypoint = \
             self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
         
@@ -355,6 +358,8 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nOptimal Plan: " + str(optimal_waypoint))
             self.one_pt_gradient_file.write("\nOptimal Cost from NN Costmap: " + str(best_cost_costmap))
             self.one_pt_gradient_file.write("\nOptimal Waypoint from NN Costmap: " + str(best_waypoint_costmap))
+            self.one_pt_gradient_file.write("\nPercent Difference Between Plan Cost and Optimal Cost from NN Costmap: " +
+                                                str((plan_cost - best_cost_costmap)/best_cost_costmap))
             self.one_pt_gradient_file.write("\nPlanner gradients: " + str(jacobian))
             self.one_pt_gradient_file.write("\nCost gradient: " + str(cost_grad))
             self.one_pt_gradient_file.write("\nFinal gradients: " + str(final_grads))
@@ -404,7 +409,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         """
         # For now, start_config is unused!
 
-        dummy_sc = [9.0, 18.0, 1.57] #[15.0, 7.5, 3.14] #[8.0, 23.0, 1.57] #[7.8, 18.9, 0.7]
+        dummy_sc = DUMMY_SC 
         dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
                 plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost = \
                 self.get_gradient_one_data_point(dummy_start_config=dummy_sc)
@@ -472,7 +477,7 @@ class AvgDifferentiablePlanner(NNPlanner):
     
     def visualize_waypoints(self, start_config, costmap, uncertainties, plan,
                             additional_waypoints, additional_costs, gradients, 
-                            display_uncertainties=True, display_gradients=True):
+                            display_uncertainties=True, display_gradients=DISPLAY_GRADIENTS):
         '''
         Plot a heatmap-style plot of various candidate waypoints and the plan
         provided by the planner along with associated uncertainties and costs.
@@ -511,6 +516,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         sorted_waypoints = total_waypoints[ind_sorted_costs]
 
         plt.figure(figsize=(10, 11))
+        plt.plot(start_config[0], start_config[1], color='g', marker='o', markersize=20)
         for i in range(len(sorted_waypoints)):
             waypoint = sorted_waypoints[i]
             if sorted_costs[i] > 100:
@@ -535,7 +541,9 @@ class AvgDifferentiablePlanner(NNPlanner):
                 x = radius * np.cos(angle) + waypoint[0]
                 y = radius * np.sin(angle) + waypoint[1]
                 plt.plot(x, y, 'k')
+                adjust_radius_clip_value = 0.75
                 if display_gradients and to_adjust_radius > 0:
+                    to_adjust_radius = min(to_adjust_radius, adjust_radius_clip_value)
                     x = to_adjust_radius * np.cos(angle) + waypoint[0]
                     y = to_adjust_radius * np.sin(angle) + waypoint[1]
                     plt.plot(x, y, 'g')
