@@ -1,4 +1,3 @@
-from math import exp
 from matplotlib import cm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,9 +7,9 @@ from planners.sampling_planner import SamplingPlanner
 from planners.nn_planner import NNPlanner
 from trajectory.trajectory import Trajectory, SystemConfig
 
-NUM_DESIRED_WAYPOINTS = 10
-DISPLAY_GRADIENTS = True  
-DUMMY_SC = [8.5, 18.95, 3.14]
+NUM_DESIRED_WAYPOINTS = 1000
+DISPLAY_GRADIENTS = False
+DUMMY_SC = [5.18632835, 12.50080987, -1.27370378]
 
 class AvgDifferentiablePlanner(NNPlanner):
     """ A sampling-based planner that is differentiable with respect 
@@ -306,7 +305,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         waypts = waypts.position_and_heading_nk3().numpy()
         optimal_waypoint = np.squeeze(waypts[optimal_cost_ind])
         # print(waypts)
-        if len(self.full_costmap_indices) == 0:
+        if len(self.full_costmap_indices) == 0:  # Generate self.full_costmap_indices once
             self.full_costmap_indices = np.random.choice(len(waypts), num_desired_waypoints, replace=False)
         full_costmap = np.squeeze(waypts[self.full_costmap_indices])
         # print("Full costmap", full_costmap[:30, :])
@@ -315,7 +314,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         full_costmap_n4 = np.hstack([full_costmap, costs])
         # print("Full costmap n4", full_costmap_n4[:30, :])
 
-        if len(self.nn_costmap_subsampling_indices) == 0:
+        if len(self.nn_costmap_subsampling_indices) == 0:  # Generate self.nn_costmap_subsampling_indices once
             self.nn_costmap_subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
         nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
 
@@ -332,6 +331,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         full_costmap_n4, true_costmap_n4, optimal_cost, optimal_waypoint = \
             self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
         
+        # The optimal waypoint in the NN ground truth costmap
         best_cost_costmap = np.min(true_costmap_n4[:, 3])
         best_cost_ind_costmap = np.argmin(true_costmap_n4[:, 3])
         best_waypoint_costmap = true_costmap_n4[best_cost_ind_costmap, :3]
@@ -365,40 +365,52 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nFinal gradients: " + str(final_grads))
 
         return dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost
+                plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost, \
+                optimal_cost, optimal_waypoint, best_cost_costmap, best_waypoint_costmap
 
-    # def get_gradients_dataset(self, num_data_points, per_file, num_files=70, 
-    #                         uncertainty_mode='random', desired_gradient='loss_grads'):
-    #     '''
-    #     Calls get_gradient_one_data_point on multiple file and batch numbers
-    #     num_data_points: The total number of data points the gradient 
-    #                     computation is desired for
-    #     per_file: How many data points should come from each file
-    #     num_files: The total number of files available
-    #     uncertainty_mode: The type of hand-coded uncertainty scheme
-    #     '''
-    #     losses = []
-    #     gradients_list = []
-    #     gradient_norms = []
-    #     gradient_on_gts = []
-    #     gradient_on_non_gts = []
-    #     num_files_to_sample_from = int(num_data_points/per_file) 
-    #     file_indices = np.random.choice(np.arange(1, num_files + 1), num_files_to_sample_from, replace=False)
-    #     num_batches = 1000   # hard-coded value -- saves the effort of loading every pickle file to check
-    #     for file_index in file_indices:
-    #         batch_indices = np.random.choice(num_batches, per_file, replace=False)
-    #         for batch_index in batch_indices:
-    #             _, _, _, _, _, loss, gradients, norm_of_grad_uncertainty = \
-    #                 self.get_gradient_one_data_point(str(file_index), batch_index, \
-    #                                                 uncertainty_mode, desired_gradient)
-    #             # Assumes that ground truth index is -1!
-    #             losses.append(loss.numpy())
-    #             gradients_list.append(gradients[-1])  # Gradient wrt uncertainty
-    #             gradient_norms.append(norm_of_grad_uncertainty)
-    #             gradient_on_gts.append(gradients[-1][-1]) # Gradient wrt uncertainty, ground truth index
-    #             gradient_on_non_gts.append(np.linalg.norm(gradients[-1][:-1]))
+    def get_gradients_dataset(self, size_dataset, range_x=[0,15], range_y=[0,20], uncertainty_mode='random'):
+        '''
+        For size_dataset number of randomly generated locations on the map within the x- and 
+        y-ranges range_x and range_y respectively, call get_gradient_one_data_point() and 
+        analyze criticality and uncertainty "goodness" data. 
+        '''
+        dataset_info = []
+        for i in range(size_dataset):
+            print(i)
+            start_config_x = np.random.rand() * (range_x[1]-range_x[0]) + range_x[0]
+            start_config_y = np.random.rand() * (range_y[1]-range_y[0]) + range_y[0]
+            start_config_theta = np.random.rand() * (2*np.pi) - np.pi
+            start_config = np.array([start_config_x, start_config_y, start_config_theta])
+            # Make sure that start_config is not in an obstacle
+            perturb_config = start_config + 0.01*np.ones(3)
+            obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(perturb_config, (1, 3)))
+            obj_val = obj_val[0]
+            while obj_val > 100:  # Regenerate start_config while it is in an obstacle
+                start_config_x = np.random.rand() * (range_x[1]-range_x[0]) + range_x[0]
+                start_config_y = np.random.rand() * (range_y[1]-range_y[0]) + range_y[0]
+                start_config_theta = np.random.rand() * (2*np.pi) - np.pi
+                start_config = np.array([start_config_x, start_config_y, start_config_theta])
+                perturb_config = start_config + 0.01*np.ones(3)
+                obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(perturb_config, (1, 3)))
+                obj_val = obj_val[0]
+
+            data = self.get_gradient_one_data_point(start_config, uncertainty_mode)
+            dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, plan, \
+                jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost, \
+                optimal_cost, optimal_waypoint, best_cost_costmap, best_waypoint_costmap = data
+            cost_criticality = tf.norm(cost_grad, ord=np.inf).numpy()
+            plan_criticality = tf.abs(tf.reduce_max(jacobian)).numpy()
+            criticality = np.linalg.norm(final_grads, ord=np.inf)
+            badness = (plan_cost - best_cost_costmap)/best_cost_costmap
+            analysis_data = {'dummy_start_config': dummy_start_config, 
+                            'cost_criticality': cost_criticality, 
+                            'plan_criticality': plan_criticality, 
+                            'criticality': criticality, 
+                            'badness': badness[0],
+                            'cost_of_start_config': obj_val}
+            dataset_info.append(analysis_data)
         
-    #     return losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts
+        return dataset_info
 
     def optimize(self, start_config):
         """ 
@@ -411,7 +423,8 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         dummy_sc = DUMMY_SC 
         dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, gradients, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost = \
+                plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs, plan_cost, \
+                optimal_cost, optimal_waypoint, best_cost_costmap, best_waypoint_costmap = \
                 self.get_gradient_one_data_point(dummy_start_config=dummy_sc)
 
         perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
@@ -424,19 +437,9 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,
                                 additional_waypoints, additional_costs, final_grads, display_uncertainties)
         
-        # Visualize gradient wrt uncertainty
-        # self.visualize_gradients(true_costmap_n4[:, 3], nn_output_n4[:, 3], uncertainties, 
-        #                             planner_internal_costs, gradients[-1])
-        
-        # num_data_points = 1000
-        # per_file = 50
-        # losses, gradients_list, gradient_norms, gradient_on_gts, gradient_on_non_gts = \
-        #                     self.get_gradients_dataset(num_data_points, per_file, \
-        #                                                 uncertainty_mode='proportional_to_cost')
-
-        # self.visualize_dataset_gradients(losses, gradients_list, gradient_norms, 
-        #                                 gradient_on_gts, gradient_on_non_gts)
-
+        size_dataset = 200
+        dataset_info = self.get_gradients_dataset(size_dataset)
+        self.visualize_dataset_info(dataset_info)
         
         # Get the optimal trajectory
         obj_val, data = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1,3)))
@@ -550,6 +553,83 @@ class AvgDifferentiablePlanner(NNPlanner):
                 # circle = plt.Circle((waypoint[0], waypoint[1]), 0.25, fill = False)
                 # plt.gca().add_patch(circle)
         plt.savefig('waypoints_heatmap.png')
+    
+    def visualize_dataset_info(self, dataset_info):
+        points = np.stack([data['dummy_start_config'] for data in dataset_info])
+        badnesses = [data['badness'] for data in dataset_info]
+        cost_criticalities = [data['cost_criticality'] for data in dataset_info]
+        plan_criticalities = [data['plan_criticality'] for data in dataset_info]
+        criticalities = [data['criticality'] for data in dataset_info]
+        costs_of_points = [data['cost_of_start_config'] for data in dataset_info]
+
+        badnesses = np.clip(badnesses, -10, 100)
+        cost_criticalities = np.clip(cost_criticalities, 0, 1000)
+        criticalities = np.clip(criticalities, 0, 1000)
+
+        plan_critical_threshold = 0.4
+        plan_critical_ind = np.argwhere(np.array(plan_criticalities) > plan_critical_threshold)
+        plan_critical_ind = np.squeeze(plan_critical_ind, axis=1)
+        if len(plan_critical_ind) != 0:
+            plan_critical_points = points[plan_critical_ind]
+            print("Plan Critical Points", plan_critical_points)
+        
+        cost_critical_threshold = 800
+        cost_critical_ind = np.argwhere(np.array(cost_criticalities) > cost_critical_threshold)
+        cost_critical_ind = np.squeeze(cost_critical_ind, axis=1)
+        if len(cost_critical_ind) != 0:
+            cost_critical_points = points[cost_critical_ind]
+            print("Cost Critical Points", cost_critical_points)
+
+        critical_threshold = 50
+        critical_ind = np.argwhere(np.array(criticalities) > critical_threshold)
+        critical_ind = np.squeeze(critical_ind, axis=1)
+        if len(critical_ind) != 0:
+            critical_points = points[critical_ind]
+            print("Overall Critical Points", critical_points)
+
+        plt.figure(figsize=(10, 11))
+        plt.scatter(plan_criticalities, criticalities, marker='o')
+        plt.title("Plan Criticality vs Criticality")
+        plt.xlabel("Plan Criticality")
+        plt.ylabel("Criticality")
+        plt.savefig('plan_criticality_vs_criticality.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.scatter(cost_criticalities, criticalities, marker='o')
+        plt.title("Cost Criticality vs Criticality")
+        plt.xlabel("Cost Criticality")
+        plt.ylabel("Criticality")
+        plt.savefig('cost_criticality_vs_criticality.png')
+        
+        plt.figure(figsize=(10, 11))
+        plt.scatter(badnesses, criticalities, marker='o')
+        plt.title("Uncertainty Badness vs Criticality")
+        plt.xlabel("Badness")
+        plt.ylabel("Criticality")
+        plt.savefig('badness_vs_criticality.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.scatter(badnesses, cost_criticalities, marker='o')
+        plt.title("Uncertainty Badness vs Cost Criticality")
+        plt.xlabel("Badness")
+        plt.ylabel("Cost Criticality")
+        plt.savefig('badness_vs_cost_criticality.png')
+
+        plt.figure(figsize=(10, 11))
+        plt.scatter(badnesses, plan_criticalities, marker='o')
+        plt.title("Uncertainty Badness vs Plan Criticality")
+        plt.xlabel("Badness")
+        plt.ylabel("Plan Criticality")
+        plt.savefig('badness_vs_plan_criticality.png')
+        
+        plt.figure(figsize=(10, 11))
+        plt.scatter(costs_of_points, criticalities, marker='o')
+        plt.title("Costs of Points vs Criticality")
+        plt.xlabel("Cost of Point")
+        plt.ylabel("Criticality")
+        plt.savefig('cost_of_point_vs_criticality.png')
+
+        print("\n\n\n", dataset_info)
 
     def visualize_gradients(self, true_costmap, nn_costmap, uncertainties, 
                             planner_internal_costs, uncertainty_gradients):
