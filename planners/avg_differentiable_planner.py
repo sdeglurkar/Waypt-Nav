@@ -9,7 +9,7 @@ from trajectory.trajectory import Trajectory, SystemConfig
 
 NUM_DESIRED_WAYPOINTS = 1000
 DISPLAY_GRADIENTS = False
-DUMMY_SC = [5.18632835, 12.50080987, -1.27370378]
+DUMMY_SC = [13.18085152, 13.16511882, -0.06730556]
 
 class AvgDifferentiablePlanner(NNPlanner):
     """ A sampling-based planner that is differentiable with respect 
@@ -21,7 +21,7 @@ class AvgDifferentiablePlanner(NNPlanner):
 
     def __init__(self, simulator, params):
         super(AvgDifferentiablePlanner, self).__init__(simulator, params)
-        self.theta = self.params.diff_planner_uncertainty_weight
+        self.theta = self.params.diff_planner_uncertainty_weight * 1000
         self.len_costmap = self.params.len_costmap
         self.finite_differencing_delta = self.params.diff_planner_finite_diff_delta
         self.plotting_clip_value = self.params.diff_planner_plotting_clip_value 
@@ -360,6 +360,8 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nOptimal Waypoint from NN Costmap: " + str(best_waypoint_costmap))
             self.one_pt_gradient_file.write("\nPercent Difference Between Plan Cost and Optimal Cost from NN Costmap: " +
                                                 str((plan_cost - best_cost_costmap)/best_cost_costmap))
+            self.one_pt_gradient_file.write("\nPercent Difference Between Plan Cost and Optimal Cost: " +
+                                                str((plan_cost - optimal_cost)/optimal_cost))
             self.one_pt_gradient_file.write("\nPlanner gradients: " + str(jacobian))
             self.one_pt_gradient_file.write("\nCost gradient: " + str(cost_grad))
             self.one_pt_gradient_file.write("\nFinal gradients: " + str(final_grads))
@@ -586,6 +588,14 @@ class AvgDifferentiablePlanner(NNPlanner):
         if len(critical_ind) != 0:
             critical_points = points[critical_ind]
             print("Overall Critical Points", critical_points)
+
+        fontsize = 20
+        plt.rc('font', size=fontsize)          # controls default text sizes
+        plt.rc('axes', titlesize=fontsize)     # fontsize of the axes title
+        plt.rc('axes', labelsize=fontsize)    # fontsize of the x and y labels
+        plt.rc('xtick', labelsize=fontsize)    # fontsize of the tick labels
+        plt.rc('ytick', labelsize=fontsize)    # fontsize of the tick labels
+        plt.rc('figure', titlesize=fontsize)  # fontsize of the figure title
 
         plt.figure(figsize=(10, 11))
         plt.scatter(plan_criticalities, criticalities, marker='o')
