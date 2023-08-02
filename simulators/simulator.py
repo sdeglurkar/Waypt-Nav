@@ -18,6 +18,7 @@ class Simulator(SimulatorHelper):
         self.obstacle_map = self._init_obstacle_map(self.rng)
         self.obj_fn = self._init_obj_fn()
         self.planner = self._init_planner()
+        self.planner.simulator = self  # Give the planner access to the render_obstacle_map() function
         self.system_dynamics = self._init_system_dynamics()
 
     @staticmethod
@@ -37,7 +38,7 @@ class Simulator(SimulatorHelper):
 
         # These are actually differentiable planner params 
         # only but keeping them here 
-        p.planner_params.diff_planner_uncertainty_weight = 1.0
+        p.planner_params.diff_planner_uncertainty_weight = 100.0
         p.planner_params.diff_planner_softmax_temperature = 1.0
         p.planner_params.len_costmap = 10
         p.planner_params.diff_planner_softmax_epsilon = 1e-10

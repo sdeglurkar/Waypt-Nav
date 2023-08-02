@@ -123,7 +123,8 @@ class SBPDMap(ObstacleMap):
             ax.set_xlim(start_2[0]-delta, start_2[0]+delta)
             ax.set_ylim(start_2[1]-delta, start_2[1]+delta)
 
-    def render_with_obstacle_margins(self, ax, start_config=None, margin0=.3, margin1=.5):
+    def render_with_obstacle_margins(self, ax, start_config=None, margin0=.3, margin1=.5, 
+                                    plotting_grid_steps=None):
         p = self.p
         occupancy_grid_masked = np.ma.masked_where(self.occupancy_grid_map == 0,
                                                    self.occupancy_grid_map)
@@ -136,7 +137,10 @@ class SBPDMap(ObstacleMap):
 
         if start_config is not None:
             start_2 = start_config.position_nk2()[0, 0].numpy()
-            delta = p.plotting_grid_steps * p.dx
+            if plotting_grid_steps is None:
+                delta = p.plotting_grid_steps * p.dx
+            else:
+                delta = plotting_grid_steps * p.dx
             ax.set_xlim(start_2[0]-delta, start_2[0]+delta)
             ax.set_ylim(start_2[1]-delta, start_2[1]+delta)
 
