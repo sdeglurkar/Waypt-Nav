@@ -3,8 +3,6 @@ from matplotlib import cm
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-from planners.extended_sampling_costs_planner import ExtendedSamplingCostsPlanner
-from planners.sampling_planner import SamplingPlanner
 from planners.nn_planner import NNPlanner
 import time
 from trajectory.trajectory import Trajectory, SystemConfig
@@ -45,13 +43,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.uncertainties = tfe.Variable(np.zeros((self.len_costmap)))
         self.candidate_waypoints = tfe.Variable(np.zeros((self.len_costmap, 3)))
 
-        # For getting an extended costmap of the environment
-        self.sampling_costs_planner = ExtendedSamplingCostsPlanner(simulator, params)
-        self.sampling_costs_planner_called = False  # Call it only once
-        self.sampling_planner = SamplingPlanner(simulator, params)
-        # For controlling the size of that costmap
+        # Controlling the size of the extended costmap of the environment 
         self.full_costmap_indices = []
-
         # Part of that costmap will be sampled to get the ground truth NN costmap
         self.nn_costmap_subsampling_indices = []
 
@@ -81,6 +74,20 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file = f
             self.one_pt_gradient_i = 0
             self.max_len_one_pt_gradient_file = 100
+    
+    def convert_state_arr_to_config(self, state):
+        '''
+        Helper function: Create the SystemConfig object from this
+        3D state array [x, y, theta].
+        '''
+        pos_nk2 = np.reshape(state[:2], (1, 1, 2)) 
+        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
+        head_nk1 = np.reshape(state[2], (1, 1, 1))
+        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
+        state_config = SystemConfig(dt=self.params.dt, n=1, k=1,
+                                        position_nk2=pos_nk2,
+                                        heading_nk1=head_nk1)
+        return state_config
 
     def get_uncertainties(self, mode='random', nn_costs=None):
         '''
@@ -121,25 +128,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         waypoint, which is in world coordinates and is also
         an array
         '''
-        # Create the SystemConfig object from this start_config array
-        pos_nk2 = np.reshape(start_config[:2], (1, 1, 2)) 
-        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-        head_nk1 = np.reshape(start_config[2], (1, 1, 1))
-        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-        start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-
-        # Create the SystemConfig object for the waypoint array 
-        pos_nk2 = np.reshape(waypoint[:, :2], (1, 1, 2))
-        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
-        head_nk1 = np.reshape(waypoint[:, 2], (1, 1, 1))
-        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-        waypoint_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-        
-        # Now retrieve Control Pipeline data
+        start_sys_config = self.convert_state_arr_to_config(start_config)
+        waypoint_config = self.convert_state_arr_to_config(waypoint[0])
         obj_val, data = self.eval_objective(start_sys_config, waypoint_config)
 
         return obj_val.numpy(), data
@@ -265,35 +255,20 @@ class AvgDifferentiablePlanner(NNPlanner):
         and 1 is the cost). It then subsamples len_costmap amount of those waypoints 
         to provide as the NN ground truth.
         '''
-        # First make the dummy_start_config a SystemConfig
-        pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
-        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
-        head_nk1 = np.reshape(dummy_start_config[2], (1, 1, 1))
-        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-        dummy_start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                           position_nk2=pos_nk2,
-                                           heading_nk1=head_nk1)
-        
-        # data = self.sampling_planner.optimize(dummy_start_sys_config)
-        # data = self.sampling_costs_planner.optimize(dummy_start_sys_config, num_desired_waypoints)
-
+        dummy_start_sys_config = self.convert_state_arr_to_config(dummy_start_config)
         obj_vals, data = self.eval_objective(dummy_start_sys_config)
         obj_vals = obj_vals.numpy()
         optimal_cost = np.min(obj_vals)
         optimal_cost_ind = np.argmin(obj_vals)
-        # print("\n\nObj vals", obj_vals)
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
         waypts = waypts.position_and_heading_nk3().numpy()
         optimal_waypoint = np.squeeze(waypts[optimal_cost_ind])
-        # print(waypts)
         if len(self.full_costmap_indices) == 0:  # Generate self.full_costmap_indices once
             self.full_costmap_indices = np.random.choice(len(waypts), num_desired_waypoints, replace=False)
         full_costmap = np.squeeze(waypts[self.full_costmap_indices])
-        # print("Full costmap", full_costmap[:30, :])
         costs = obj_vals[self.full_costmap_indices]
         costs = np.expand_dims(costs, axis=1)
         full_costmap_n4 = np.hstack([full_costmap, costs])
-        # print("Full costmap n4", full_costmap_n4[:30, :])
 
         if len(self.nn_costmap_subsampling_indices) == 0:  # Generate self.nn_costmap_subsampling_indices once
             self.nn_costmap_subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
@@ -301,7 +276,6 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         return full_costmap_n4, nn_costmap_true, optimal_cost, optimal_waypoint
 
-    
     def get_gradient_one_data_point(self, dummy_start_config, uncertainty_mode='random'):
         '''
         This function is given a start config for the robot and generates the 
@@ -325,7 +299,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         plan, jacobian, cost_grad, final_grads, perturbed_waypoints, perturbed_costs = \
             self.planner_loss(dummy_start_config, nn_output_n4, uncertainties)
         
-        plan_cost, _ = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1,3)))
+        plan_cost, _ = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1, 3)))
         plan_cost = plan_cost[0]
         final_grads = np.squeeze(final_grads.numpy())
 
@@ -350,6 +324,8 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nOptimal Waypoint from NN Costmap: " + str(best_waypoint_costmap))
             self.one_pt_gradient_file.write("\nPercent Difference Between Plan Cost and Optimal Cost from NN Costmap: " +
                                                 str((plan_cost - best_cost_costmap)/best_cost_costmap))
+            self.one_pt_gradient_file.write("\nSame as above wrt plan cost: " +
+                                                str((plan_cost - best_cost_costmap)/plan_cost))
             self.one_pt_gradient_file.write("\nPercent Difference Between Plan Cost and Optimal Cost: " +
                                                 str((plan_cost - optimal_cost)/optimal_cost))
             self.one_pt_gradient_file.write("\nPercent Cost Grad: " + str(percent_cost_grad))
@@ -357,10 +333,24 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nCost gradient: " + str(cost_grad))
             self.one_pt_gradient_file.write("\nFinal gradients: " + str(final_grads))
 
-        return dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, jacobian, cost_grad, final_grads, percent_cost_grad, perturbed_waypoints, \
-                perturbed_costs, plan_cost, optimal_cost, optimal_waypoint, \
-                best_cost_costmap, best_waypoint_costmap
+        return_dict = {'dummy_start_config': dummy_start_config,
+                        'full_costmap_n4': full_costmap_n4,
+                        'true_costmap_n4': true_costmap_n4,
+                        'nn_output_n4': nn_output_n4,
+                        'uncertainties': uncertainties,
+                        'plan': plan,
+                        'jacobian': jacobian,
+                        'cost_grad': cost_grad,
+                        'final_grads': final_grads,
+                        'percent_cost_grad': percent_cost_grad,
+                        'perturbed_waypoints': perturbed_waypoints,
+                        'perturbed_costs': perturbed_costs,
+                        'plan_cost': plan_cost,
+                        'optimal_cost': optimal_cost,
+                        'optimal_waypoint': optimal_waypoint,
+                        'best_cost_costmap': best_cost_costmap,
+                        'best_waypoint_costmap': best_waypoint_costmap}
+        return return_dict
 
     def get_gradients_dataset(self, size_dataset, range_x=[0,15], range_y=[0,20], 
                             fixed_theta=None, uncertainty_mode='random'):
@@ -368,7 +358,12 @@ class AvgDifferentiablePlanner(NNPlanner):
         For size_dataset number of randomly generated locations on the map within the x- and 
         y-ranges range_x and range_y respectively, call get_gradient_one_data_point() and 
         analyze criticality and uncertainty "goodness" data. 
+
+        fixed_theta is set to a value if all points should have the same heading. Otherwise,
+        the headings are generated randomly between -pi and pi.
         '''
+        print("\nComputing costs and gradients for a dataset of robot poses:")
+        print("Point no. :")
         dataset_info = []
         for i in range(size_dataset):
             print(i)
@@ -396,9 +391,14 @@ class AvgDifferentiablePlanner(NNPlanner):
                 obj_val = obj_val[0]
 
             data = self.get_gradient_one_data_point(start_config, uncertainty_mode)
-            dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, plan, \
-                jacobian, cost_grad, final_grads, percent_cost_grad, perturbed_waypoints, perturbed_costs, \
-                plan_cost, optimal_cost, optimal_waypoint, best_cost_costmap, best_waypoint_costmap = data
+            dummy_start_config = data['dummy_start_config']
+            jacobian = data['jacobian']
+            cost_grad = data['jacobian']
+            final_grads = data['final_grads']
+            percent_cost_grad = data['percent_cost_grad']
+            plan_cost = data['plan_cost']
+            best_cost_costmap = data['best_cost_costmap'] 
+
             cost_criticality = tf.norm(cost_grad, ord=np.inf).numpy()
             plan_criticality = tf.abs(tf.reduce_max(jacobian)).numpy()
             criticality = np.linalg.norm(final_grads, ord=np.inf)
@@ -415,6 +415,8 @@ class AvgDifferentiablePlanner(NNPlanner):
                             'plan_cost': plan_cost}
             dataset_info.append(analysis_data)
         
+        print("Finished the dataset!")
+
         return dataset_info
 
     def optimize(self, start_config):
@@ -427,11 +429,19 @@ class AvgDifferentiablePlanner(NNPlanner):
         # For now, start_config is unused!
 
         dummy_sc = DUMMY_SC 
-        dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                plan, jacobian, cost_grad, final_grads, percent_cost_grad, perturbed_waypoints, \
-                perturbed_costs, plan_cost, optimal_cost, optimal_waypoint, best_cost_costmap, \
-                best_waypoint_costmap = self.get_gradient_one_data_point(dummy_start_config=dummy_sc)
+        data = self.get_gradient_one_data_point(dummy_start_config=dummy_sc)
+        dummy_start_config = data['dummy_start_config']
+        full_costmap_n4 = data['full_costmap_n4']
+        nn_output_n4 = data['nn_output_n4']
+        uncertainties = data['uncertainties']
+        plan = data['plan']
+        final_grads = data['final_grads']
+        perturbed_waypoints = data['perturbed_waypoints']
+        perturbed_costs = data['perturbed_costs']
+        plan_cost = data['plan_cost']
 
+        # Visualize costmap for dummy_start_config along with the plan and the perturbed
+        # points around the plan
         perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
         additional_waypoints = perturbed_waypoints.copy()
         additional_waypoints.extend(full_costmap_n4[:, :3])
@@ -439,10 +449,11 @@ class AvgDifferentiablePlanner(NNPlanner):
         additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
 
         display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
-        self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,
+        self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan, plan_cost,
                                 additional_waypoints, additional_costs, final_grads, display_uncertainties)
         
-        size_dataset = 1000 #200
+        # Analyze gradients for a dataset of robot poses
+        size_dataset = 35 #1000 #200
         dataset_info = self.get_gradients_dataset(size_dataset, fixed_theta=0.0)
         points, non_failed_points, plan_critical_points, cost_critical_points, critical_points, \
                 decision_critical_points, badnesses, cost_criticalities, plan_criticalities, \
@@ -462,8 +473,11 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), 
                                         figname='decision_critical_badness_points_heatmap', plot_quiver=False)
         
+
+        # All of the rest of this function is needed for this planner to work with the 
+        # rest of the codebase
         # Get the optimal trajectory
-        obj_val, data = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1,3)))
+        obj_val, data = self.get_cost_of_a_waypoint(dummy_start_config, np.reshape(plan, (1, 3)))
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
 
         idx = 0  # 0 bc there's only one waypoint
@@ -474,18 +488,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         min_horizon = int(tf.ceil(horizons_s[idx, 0]/self.params.dt).numpy())
 
         # To output in the metadata
-        pos_nk2 = np.reshape(dummy_start_config[:2], (1, 1, 2))  
-        head_nk1 = np.reshape(dummy_start_config[2], (1, 1, 1))
-        dummy_start_sys_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                           position_nk2=pos_nk2,
-                                           heading_nk1=head_nk1)
-        pos_nk2 = np.reshape(plan[:2, :], (1, 1, 2))  
-        pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32)
-        head_nk1 = np.reshape(plan[2, :], (1, 1, 1))  
-        head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-        plan_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                                position_nk2=pos_nk2,
-                                                heading_nk1=head_nk1)
+        dummy_start_sys_config = self.convert_state_arr_to_config(dummy_start_config)
+        plan_config = self.convert_state_arr_to_config(np.reshape(plan, (3,)))
 
         data = {'system_config': dummy_start_sys_config,
                 'waypoint_config': SystemConfig.copy(plan_config),
@@ -499,7 +503,7 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         return data
     
-    def visualize_waypoints(self, start_config, costmap, uncertainties, plan,
+    def visualize_waypoints(self, start_config, costmap, uncertainties, plan, plan_cost,
                             additional_waypoints, additional_costs, gradients, 
                             display_uncertainties=True, display_gradients=DISPLAY_GRADIENTS):
         '''
@@ -519,17 +523,13 @@ class AvgDifferentiablePlanner(NNPlanner):
         # First get the costs of the candidate waypoints
         candidate_waypoints_costs = []
         for waypoint in costmap:
-            obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(waypoint, (1,3)))
+            obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(waypoint, (1, 3)))
             candidate_waypoints_costs.append(obj_val[0])
-        
-        plan_cost, _ = self.get_cost_of_a_waypoint(start_config, plan)
 
         candidate_waypoints_costs = np.stack(candidate_waypoints_costs)
-        plan_cost = plan_cost[0]
 
         total_waypoints = np.vstack([costmap, plan, additional_waypoints])
         total_costs = np.hstack([candidate_waypoints_costs, plan_cost, additional_costs])
-        # print("Total costs", total_costs)
 
         viridis = cm.get_cmap('coolwarm', len(total_costs))
         sorted_costs = np.sort(total_costs)
@@ -539,34 +539,19 @@ class AvgDifferentiablePlanner(NNPlanner):
         ind_sorted_costs = np.argsort(total_costs)
         sorted_waypoints = total_waypoints[ind_sorted_costs]
 
-        # plt.figure(figsize=(10, 11))
         fig, ax = plt.subplots(figsize=(10, 11))
         plot_quiver = display_uncertainties
         plt.plot(start_config[0], start_config[1], color='g', marker='o', markersize=20)
         for i in range(len(sorted_waypoints)):
             waypoint = sorted_waypoints[i]
-            pos_nk2 = np.reshape(waypoint[:2], (1, 1, 2)) 
-            pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-            head_nk1 = np.reshape(waypoint[2], (1, 1, 1))
-            head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-            point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
+            point_config = self.convert_state_arr_to_config(waypoint)
             if sorted_costs[i] > 100:
-                # plt.plot(waypoint[0], waypoint[1], color='k', marker='o')
                 point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
                                  marker='o', color='k')
             else:
-                # plt.plot(waypoint[0], waypoint[1], color=viridis(normalized_sorted_costs[i]), marker='o')
                 point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
                                  marker='o', color=viridis(normalized_sorted_costs[i]))
         if display_uncertainties:
-            # ax = plt.axes()
-            # plt.axis([0, 3, 0, 3])
-            # circle = plt.Circle((1.0, 2.0), 0.5, fill = False)
-            # plt.gcf().add_patch(circle)
-            # ax.add_artist(circle)
-            # ax.autoscale()
             for i in range(len(costmap)):
                 waypoint = costmap[i]
                 uncertainty = uncertainties[i].numpy()
@@ -584,12 +569,13 @@ class AvgDifferentiablePlanner(NNPlanner):
                     x = to_adjust_radius * np.cos(angle) + waypoint[0]
                     y = to_adjust_radius * np.sin(angle) + waypoint[1]
                     plt.plot(x, y, 'g')
-                # circle = plt.Circle((waypoint[0], waypoint[1]), 0.25, fill = False)
-                # plt.gca().add_patch(circle)
-        # plt.savefig('waypoints_heatmap.png')
         fig.savefig('waypoints_heatmap.png')
 
     def visualize_dataset_info(self, dataset_info):
+        '''
+        Plot plan and task critical points (points that have criticalities above
+        a threshold). Additionally plot the relationships between various variables.
+        '''
         points = np.stack([data['dummy_start_config'] for data in dataset_info])
         badnesses = [data['badness'] for data in dataset_info]
         cost_criticalities = [data['cost_criticality'] for data in dataset_info]
@@ -604,9 +590,23 @@ class AvgDifferentiablePlanner(NNPlanner):
         criticalities = np.clip(criticalities, 0, 1000)
         decision_criticalities = np.clip(decision_criticalities, 0, 200)
 
-        markersize = 14
-        plotting_grid_steps = 150
+        plan_cost_threshold = 1000
+        failed_plan_ind = np.argwhere(np.array(plan_costs) > plan_cost_threshold)
+        failed_plan_ind = np.squeeze(failed_plan_ind, axis=1)
 
+        def plot_points_on_map(points, figname, markersize=14, 
+                                plotting_grid_steps=150, plot_quiver=True):
+            fig, ax = plt.subplots(figsize=(10, 11))
+            self.simulator._render_obstacle_map(ax, plotting_grid_steps)
+            self.simulator.goal_config.render(ax, batch_idx=0, plot_quiver=False,
+                                    marker='*', color='y', markersize=markersize)
+            for point in points:
+                point_config = self.convert_state_arr_to_config(point)
+                point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
+                                    marker='o', color='b', markersize=markersize)
+            fig.savefig(figname)
+
+        ### Plan Critical Points ###
         plan_critical_threshold = 3
         plan_critical_ind = np.argwhere(np.array(plan_criticalities) > plan_critical_threshold)
         plan_critical_ind = np.squeeze(plan_critical_ind, axis=1)
@@ -615,60 +615,29 @@ class AvgDifferentiablePlanner(NNPlanner):
             plan_critical_points = points[plan_critical_ind]
             print("Plan Critical Points", plan_critical_points)
         
-        fig, ax = plt.subplots(figsize=(10, 11))
-        self.simulator._render_obstacle_map(ax, plotting_grid_steps)
-        self.simulator.goal_config.render(ax, batch_idx=0, plot_quiver=False,
-                                 marker='*', color='y', markersize=markersize)
-        for point in plan_critical_points:
-            pos_nk2 = np.reshape(point[:2], (1, 1, 2)) 
-            pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-            head_nk1 = np.reshape(point[2], (1, 1, 1))
-            head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-            point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-            point_config.render(ax, batch_idx=0, plot_quiver=True,
-                                 marker='o', color='b', markersize=markersize)
-        fig.savefig('plan_critical_points.png')
-
+        plot_points_on_map(plan_critical_points, 'plan_critical_points.png')
+        
+        ### Cost Critical Points ###
         cost_critical_threshold = 150 #800
         cost_critical_ind = np.argwhere(np.array(cost_criticalities) > cost_critical_threshold)
         cost_critical_ind = np.squeeze(cost_critical_ind, axis=1)
-        plan_cost_threshold = 1000
-        failed_plan_ind = np.argwhere(np.array(plan_costs) > plan_cost_threshold)
-        failed_plan_ind = np.squeeze(failed_plan_ind, axis=1)
+        
         cost_critical_points = []
         if len(cost_critical_ind) != 0:
             cost_critical_points = points[cost_critical_ind]
             if len(failed_plan_ind) != 0:
-                # Take points that are decision critical but whose plan has not failed
+                # Take points that are cost critical but whose plan has not failed
                 subtraction_ind = list(set(list(cost_critical_ind)) - set(list(failed_plan_ind)))
                 subtraction_ind = np.array(subtraction_ind)
                 cost_critical_points = points[subtraction_ind]
             print("Cost Critical Points", cost_critical_points)
 
-        fig, ax = plt.subplots(figsize=(10, 11))
-        self.simulator._render_obstacle_map(ax, plotting_grid_steps)
-        self.simulator.goal_config.render(ax, batch_idx=0, plot_quiver=False,
-                                 marker='*', color='y', markersize=markersize)
-        for point in cost_critical_points:
-            pos_nk2 = np.reshape(point[:2], (1, 1, 2)) 
-            pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-            head_nk1 = np.reshape(point[2], (1, 1, 1))
-            head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-            point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-            point_config.render(ax, batch_idx=0, plot_quiver=True,
-                                 marker='o', color='b', markersize=markersize)
-        fig.savefig('cost_critical_points.png')
-
+        plot_points_on_map(cost_critical_points, 'cost_critical_points.png')
+        
+        ### Decision Critical Points ###
         decision_critical_threshold = 0.25
         decision_critical_ind = np.argwhere(np.array(decision_criticalities) > decision_critical_threshold)
         decision_critical_ind = np.squeeze(decision_critical_ind, axis=1)
-        plan_cost_threshold = 1000
-        failed_plan_ind = np.argwhere(np.array(plan_costs) > plan_cost_threshold)
-        failed_plan_ind = np.squeeze(failed_plan_ind, axis=1)
         decision_critical_points = []
         if len(decision_critical_ind) != 0:
             decision_critical_points = points[decision_critical_ind]
@@ -682,6 +651,21 @@ class AvgDifferentiablePlanner(NNPlanner):
             print("Decision Critical Points", decision_critical_points)
             print("Plan Criticalities at those Points", plan_criticalities_decision_critical)
         
+        plot_points_on_map(decision_critical_points, 'decision_critical_points.png')
+
+        ### Overall Critical Points ###
+        critical_threshold = 100
+        critical_ind = np.argwhere(np.array(criticalities) < critical_threshold)
+        critical_ind = np.squeeze(critical_ind, axis=1)
+        critical_points = []
+        if len(critical_ind) != 0:
+            critical_points = points[critical_ind]
+            print("Overall Critical Points", critical_points)
+        
+        plot_points_on_map(critical_points, 'critical_points.png')
+
+
+        # Non-failed stats
         if len(failed_plan_ind) != 0:
             non_failed_ind = list(set(list(np.arange(len(points)))) - set(list(failed_plan_ind)))
             non_failed_points = points[non_failed_ind]
@@ -693,105 +677,40 @@ class AvgDifferentiablePlanner(NNPlanner):
             non_failed_decision_criticalities = decision_criticalities
             non_failed_cost_criticalities = cost_criticalities
             non_failed_badnesses = badnesses
-        
-        fig, ax = plt.subplots(figsize=(10, 11))
-        self.simulator._render_obstacle_map(ax, plotting_grid_steps)
-        self.simulator.goal_config.render(ax, batch_idx=0, plot_quiver=False,
-                                 marker='*', color='y', markersize=markersize)
-        for point in decision_critical_points:
-            pos_nk2 = np.reshape(point[:2], (1, 1, 2)) 
-            pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-            head_nk1 = np.reshape(point[2], (1, 1, 1))
-            head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-            point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-            point_config.render(ax, batch_idx=0, plot_quiver=True,
-                                 marker='o', color='b', markersize=markersize)
-        fig.savefig('decision_critical_points.png')
-
-        critical_threshold = 100
-        critical_ind = np.argwhere(np.array(criticalities) < critical_threshold)
-        critical_ind = np.squeeze(critical_ind, axis=1)
-        critical_points = []
-        if len(critical_ind) != 0:
-            critical_points = points[critical_ind]
-            print("Overall Critical Points", critical_points)
-        
-        fig, ax = plt.subplots(figsize=(10, 11))
-        self.simulator._render_obstacle_map(ax, plotting_grid_steps)
-        self.simulator.goal_config.render(ax, batch_idx=0, plot_quiver=False,
-                                 marker='*', color='y', markersize=markersize)
-        for point in critical_points:
-            pos_nk2 = np.reshape(point[:2], (1, 1, 2)) 
-            pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-            head_nk1 = np.reshape(point[2], (1, 1, 1))
-            head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-            point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-            point_config.render(ax, batch_idx=0, plot_quiver=True,
-                                 marker='o', color='b', markersize=markersize)
-        fig.savefig('critical_points.png')
 
 
+        # Plots - relationships between variables
+        def scatter_plotter(var1, var2, title, xlabel, ylabel, figname):
+            fontsize = 20
+            plt.rc('font', size=fontsize)          # controls default text sizes
+            plt.rc('axes', titlesize=fontsize)     # fontsize of the axes title
+            plt.rc('axes', labelsize=fontsize)    # fontsize of the x and y labels
+            plt.rc('xtick', labelsize=fontsize)    # fontsize of the tick labels
+            plt.rc('ytick', labelsize=fontsize)    # fontsize of the tick labels
+            plt.rc('figure', titlesize=fontsize)  # fontsize of the figure title
 
-        fontsize = 20
-        plt.rc('font', size=fontsize)          # controls default text sizes
-        plt.rc('axes', titlesize=fontsize)     # fontsize of the axes title
-        plt.rc('axes', labelsize=fontsize)    # fontsize of the x and y labels
-        plt.rc('xtick', labelsize=fontsize)    # fontsize of the tick labels
-        plt.rc('ytick', labelsize=fontsize)    # fontsize of the tick labels
-        plt.rc('figure', titlesize=fontsize)  # fontsize of the figure title
+            plt.figure(figsize=(10, 11))
+            plt.scatter(var1, var2, marker='o')
+            plt.title(title)
+            plt.xlabel(xlabel)
+            plt.ylabel(ylabel)
+            plt.savefig(figname)
 
-        plt.figure(figsize=(10, 11))
-        plt.scatter(plan_criticalities, criticalities, marker='o')
-        plt.title("Plan Criticality vs Criticality")
-        plt.xlabel("Plan Criticality")
-        plt.ylabel("Criticality")
-        plt.savefig('plan_criticality_vs_criticality.png')
-
-        plt.figure(figsize=(10, 11))
-        plt.scatter(cost_criticalities, criticalities, marker='o')
-        plt.title("Cost Criticality vs Criticality")
-        plt.xlabel("Cost Criticality")
-        plt.ylabel("Criticality")
-        plt.savefig('cost_criticality_vs_criticality.png')
-        
-        plt.figure(figsize=(10, 11))
-        plt.scatter(badnesses, criticalities, marker='o')
-        plt.title("Uncertainty Badness vs Criticality")
-        plt.xlabel("Badness")
-        plt.ylabel("Criticality")
-        plt.savefig('badness_vs_criticality.png')
-
-        plt.figure(figsize=(10, 11))
-        plt.scatter(badnesses, cost_criticalities, marker='o')
-        plt.title("Uncertainty Badness vs Cost Criticality")
-        plt.xlabel("Badness")
-        plt.ylabel("Cost Criticality")
-        plt.savefig('badness_vs_cost_criticality.png')
-
-        plt.figure(figsize=(10, 11))
-        plt.scatter(badnesses, plan_criticalities, marker='o')
-        plt.title("Uncertainty Badness vs Plan Criticality")
-        plt.xlabel("Badness")
-        plt.ylabel("Plan Criticality")
-        plt.savefig('badness_vs_plan_criticality.png')
-
-        plt.figure(figsize=(10, 11))
-        plt.scatter(decision_criticalities, plan_criticalities, marker='o')
-        plt.title("Decision Criticality vs Plan Criticality")
-        plt.xlabel("Decision Criticality")
-        plt.ylabel("Plan Criticality")
-        plt.savefig('decision_vs_plan_criticality.png')
-        
-        plt.figure(figsize=(10, 11))
-        plt.scatter(costs_of_points, criticalities, marker='o')
-        plt.title("Costs of Points vs Criticality")
-        plt.xlabel("Cost of Point")
-        plt.ylabel("Criticality")
-        plt.savefig('cost_of_point_vs_criticality.png')
+        scatter_plotter(plan_criticalities, criticalities, "Plan Criticality vs Criticality", 
+                        "Plan Criticality", "Criticality", 'plan_criticality_vs_criticality.png')
+        scatter_plotter(cost_criticalities, criticalities, "Cost Criticality vs Criticality", 
+                        "Cost Criticality", "Criticality", 'cost_criticality_vs_criticality.png')
+        scatter_plotter(badnesses, criticalities, "Uncertainty Badness vs Criticality", 
+                        "Badness", "Criticality", 'badness_vs_criticality.png')
+        scatter_plotter(badnesses, cost_criticalities, "Uncertainty Badness vs Cost Criticality", 
+                        "Badness", "Cost Criticality", 'badness_vs_cost_criticality.png')
+        scatter_plotter(badnesses, plan_criticalities, "Uncertainty Badness vs Plan Criticality", 
+                        "Badness", "Plan Criticality", 'badness_vs_plan_criticality.png')
+        scatter_plotter(decision_criticalities, plan_criticalities, 
+                        "Decision Criticality vs Plan Criticality", "Decision Criticality", 
+                        "Plan Criticality", 'decision_vs_plan_criticality.png')
+        scatter_plotter(costs_of_points, criticalities, "Costs of Points vs Criticality", 
+                        "Cost of Point", "Criticality", 'cost_of_point_vs_criticality.png')
 
         return points, non_failed_points, plan_critical_points, cost_critical_points, critical_points, \
                 decision_critical_points, badnesses, cost_criticalities, plan_criticalities, \
@@ -817,14 +736,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.simulator._render_obstacle_map(ax, plotting_grid_steps)
         for i in range(len(sorted_points)):
             point = sorted_points[i]
-            pos_nk2 = np.reshape(point[:2], (1, 1, 2)) 
-            pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-            head_nk1 = np.reshape(point[2], (1, 1, 1))
-            head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-            point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                        position_nk2=pos_nk2,
-                                        heading_nk1=head_nk1)
-            
+            point_config = self.convert_state_arr_to_config(point)
             point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
                                  marker='o', color=viridis(sorted_criticalities[i]))
         
@@ -835,6 +747,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         
 
         if len(points) < 100:
+            # Visualize each point
             for i in range(len(points)):
                 point = points[i]
                 criticality = criticalities[i]
@@ -842,22 +755,23 @@ class AvgDifferentiablePlanner(NNPlanner):
                 
                 fig, ax = plt.subplots(figsize=(10, 11))
                 self.simulator._render_obstacle_map(ax, plotting_grid_steps)
-                pos_nk2 = np.reshape(point[:2], (1, 1, 2)) 
-                pos_nk2 = tf.convert_to_tensor(pos_nk2, dtype=tf.float32) 
-                head_nk1 = np.reshape(point[2], (1, 1, 1))
-                head_nk1 = tf.convert_to_tensor(head_nk1, dtype=tf.float32)
-                point_config = SystemConfig(dt=self.params.dt, n=1, k=1,
-                                            position_nk2=pos_nk2,
-                                            heading_nk1=head_nk1)
-                point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
-                                    marker='o', color=viridis(criticality))
+                point_config = self.convert_state_arr_to_config(point)
+                point_config.render(ax, batch_idx=0, plot_quiver=True,
+                                    marker='o', color=viridis(criticality), 
+                                    markersize=17)
                 fig.savefig('single_point_on_map.png')
+                time.sleep(5)
 
-
-                dummy_start_config, full_costmap_n4, true_costmap_n4, nn_output_n4, uncertainties, \
-                        plan, jacobian, cost_grad, final_grads, percent_cost_grad, perturbed_waypoints, \
-                        perturbed_costs, plan_cost, optimal_cost, optimal_waypoint, best_cost_costmap, \
-                        best_waypoint_costmap = self.get_gradient_one_data_point(dummy_start_config=point)
+                data = self.get_gradient_one_data_point(dummy_start_config=point)
+                dummy_start_config = data['dummy_start_config']
+                full_costmap_n4 = data['full_costmap_n4']
+                nn_output_n4 = data['nn_output_n4']
+                uncertainties = data['uncertainties']
+                plan = data['plan']
+                final_grads = data['final_grads']
+                perturbed_waypoints = data['perturbed_waypoints']
+                perturbed_costs = data['perturbed_costs']
+                plan_cost = data['plan_cost']
 
                 perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
                 additional_waypoints = perturbed_waypoints.copy()
@@ -866,9 +780,9 @@ class AvgDifferentiablePlanner(NNPlanner):
                 additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
 
                 display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
-                self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan,
+                self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan, plan_cost,
                                         additional_waypoints, additional_costs, final_grads, display_uncertainties)
-                time.sleep(7)
+                time.sleep(5)
 
     @staticmethod
     def empty_data_dict():
