@@ -10,6 +10,11 @@ from trajectory.trajectory import Trajectory, SystemConfig
 NUM_DESIRED_WAYPOINTS = 1000
 DISPLAY_GRADIENTS = False
 DUMMY_SC = [9.39883102, 19.28911387, 2.57399193]
+SIZE_DATASET = 200
+OBSTACLE_COST = 100
+DISPLAY_MULT = 5
+PER_POINT_VIZ = 100
+
 
 class AvgDifferentiablePlanner(NNPlanner):
     """ A sampling-based planner that is differentiable with respect 
@@ -270,19 +275,22 @@ class AvgDifferentiablePlanner(NNPlanner):
         costs = np.expand_dims(costs, axis=1)
         full_costmap_n4 = np.hstack([full_costmap, costs])
 
-        if len(self.nn_costmap_subsampling_indices) == 0:  # Generate self.nn_costmap_subsampling_indices once
-            self.nn_costmap_subsampling_indices = np.random.choice(num_desired_waypoints, len_costmap, replace=False)
+        if len(self.nn_costmap_subsampling_indices) == 0:  
+            # Generate self.nn_costmap_subsampling_indices once
+            self.nn_costmap_subsampling_indices = \
+                np.random.choice(num_desired_waypoints, len_costmap, replace=False)
         nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
 
         return full_costmap_n4, nn_costmap_true, optimal_cost, optimal_waypoint
 
-    def get_gradient_one_data_point(self, dummy_start_config, uncertainty_mode='random'):
+    def get_gradient_one_data_point(self, dummy_start_config, 
+                                    num_desired_waypoints=NUM_DESIRED_WAYPOINTS, 
+                                    uncertainty_mode='random'):
         '''
         This function is given a start config for the robot and generates the 
         ground truth costmap for that config. It then simulates the neural network 
         output from that and then computes the planner gradient. 
         '''
-        num_desired_waypoints = NUM_DESIRED_WAYPOINTS
         full_costmap_n4, true_costmap_n4, optimal_cost, optimal_waypoint = \
             self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
         
@@ -352,7 +360,7 @@ class AvgDifferentiablePlanner(NNPlanner):
                         'best_waypoint_costmap': best_waypoint_costmap}
         return return_dict
 
-    def get_gradients_dataset(self, size_dataset, range_x=[0,15], range_y=[0,20], 
+    def get_gradients_dataset(self, size_dataset=SIZE_DATASET, range_x=[2,16], range_y=[6,20], 
                             fixed_theta=None, uncertainty_mode='random'):
         '''
         For size_dataset number of randomly generated locations on the map within the x- and 
@@ -378,7 +386,7 @@ class AvgDifferentiablePlanner(NNPlanner):
             perturb_config = start_config + 0.01*np.ones(3)
             obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(perturb_config, (1, 3)))
             obj_val = obj_val[0]
-            while obj_val > 100:  # Regenerate start_config while it is in an obstacle
+            while obj_val > OBSTACLE_COST:  # Regenerate start_config while it is in an obstacle
                 start_config_x = np.random.rand() * (range_x[1]-range_x[0]) + range_x[0]
                 start_config_y = np.random.rand() * (range_y[1]-range_y[0]) + range_y[0]
                 if fixed_theta is not None:
@@ -448,24 +456,23 @@ class AvgDifferentiablePlanner(NNPlanner):
         additional_costs = perturbed_costs.copy()
         additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
 
-        display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
+        display_uncertainties = (len(full_costmap_n4) <= DISPLAY_MULT*self.len_costmap)  # too many points to display
         self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan, plan_cost,
                                 additional_waypoints, additional_costs, final_grads, display_uncertainties)
         
         # Analyze gradients for a dataset of robot poses
-        size_dataset = 35 #1000 #200
-        dataset_info = self.get_gradients_dataset(size_dataset, fixed_theta=0.0)
+        dataset_info = self.get_gradients_dataset(fixed_theta=0.0)
         points, non_failed_points, plan_critical_points, cost_critical_points, critical_points, \
                 decision_critical_points, badnesses, cost_criticalities, plan_criticalities, \
                 criticalities, decision_criticalities, non_failed_decision_criticalities,\
                 non_failed_cost_criticalities, non_failed_badnesses = \
                 self.visualize_dataset_info(dataset_info)
-        print("Critical points heatmap: plan")
-        self.visualize_critical_points(points, plan_criticalities, 
-                                        figname='plan_critical_points_heatmap', plot_quiver=False)
-        print("Critical points heatmap: decision")
-        self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
-                                        figname='decision_critical_points_heatmap', plot_quiver=False)
+        # print("Critical points heatmap: plan")
+        # self.visualize_critical_points(points, plan_criticalities, 
+        #                                 figname='plan_critical_points_heatmap', plot_quiver=False)
+        # print("Critical points heatmap: decision")
+        # self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
+        #                                 figname='decision_critical_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: cost")
         self.visualize_critical_points(non_failed_points, non_failed_cost_criticalities, 
                                         figname='cost_critical_points_heatmap', plot_quiver=False)
@@ -533,9 +540,9 @@ class AvgDifferentiablePlanner(NNPlanner):
 
         viridis = cm.get_cmap('coolwarm', len(total_costs))
         sorted_costs = np.sort(total_costs)
-        sorted_costs_small = sorted_costs[sorted_costs < 100]
+        sorted_costs_small = sorted_costs[sorted_costs < OBSTACLE_COST]
         normalized_sorted_costs = np.copy(sorted_costs)
-        #normalized_sorted_costs[sorted_costs < 100] /= sum(sorted_costs_small)
+        #normalized_sorted_costs[sorted_costs < OBSTACLE_COST] /= sum(sorted_costs_small)
         ind_sorted_costs = np.argsort(total_costs)
         sorted_waypoints = total_waypoints[ind_sorted_costs]
 
@@ -545,7 +552,7 @@ class AvgDifferentiablePlanner(NNPlanner):
         for i in range(len(sorted_waypoints)):
             waypoint = sorted_waypoints[i]
             point_config = self.convert_state_arr_to_config(waypoint)
-            if sorted_costs[i] > 100:
+            if sorted_costs[i] > OBSTACLE_COST:
                 point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
                                  marker='o', color='k')
             else:
@@ -725,7 +732,9 @@ class AvgDifferentiablePlanner(NNPlanner):
         print("Minimum criticality:", min(criticalities))
         print("Maximum criticality:", max(criticalities), "\n")
 
-        viridis = cm.get_cmap('coolwarm', len(criticalities))
+        # lut = len(criticalities)
+        lut = int(max(criticalities) - min(criticalities))
+        viridis = cm.get_cmap('coolwarm', lut)
         sorted_criticalities = np.sort(criticalities)
         ind_sorted_criticalities = np.argsort(criticalities)
         sorted_points = points[ind_sorted_criticalities]
@@ -746,7 +755,7 @@ class AvgDifferentiablePlanner(NNPlanner):
             fig.savefig(figname + '.png')
         
 
-        if len(points) < 100:
+        if len(points) < PER_POINT_VIZ:
             # Visualize each point
             for i in range(len(points)):
                 point = points[i]
@@ -762,7 +771,7 @@ class AvgDifferentiablePlanner(NNPlanner):
                 fig.savefig('single_point_on_map.png')
                 time.sleep(5)
 
-                data = self.get_gradient_one_data_point(dummy_start_config=point)
+                data = self.get_gradient_one_data_point(dummy_start_config=point, num_desired_waypoints=10)
                 dummy_start_config = data['dummy_start_config']
                 full_costmap_n4 = data['full_costmap_n4']
                 nn_output_n4 = data['nn_output_n4']
@@ -779,11 +788,15 @@ class AvgDifferentiablePlanner(NNPlanner):
                 additional_costs = perturbed_costs.copy()
                 additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
 
-                display_uncertainties = (len(full_costmap_n4) <= 5*self.len_costmap)  # too many points to display
+                display_uncertainties = (len(full_costmap_n4) <= DISPLAY_MULT*self.len_costmap)  # too many points to display
                 self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan, plan_cost,
                                         additional_waypoints, additional_costs, final_grads, display_uncertainties)
                 time.sleep(5)
 
+
+
+    ########## The rest of this file is for making this planner compatible with the rest of the 
+    # codebase ##########
     @staticmethod
     def empty_data_dict():
         """Returns a dictionary with keys mapping to empty lists
