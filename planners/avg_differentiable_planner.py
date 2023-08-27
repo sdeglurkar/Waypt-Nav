@@ -9,8 +9,8 @@ from trajectory.trajectory import Trajectory, SystemConfig
 
 NUM_DESIRED_WAYPOINTS = 1000
 DISPLAY_GRADIENTS = False
-DUMMY_SC = [9.39883102, 19.28911387, 2.57399193]
-SIZE_DATASET = 200
+DUMMY_SC = [9, 19, np.pi/6] #[9.39883102, 19.28911387, 2.57399193]
+SIZE_DATASET = 35
 OBSTACLE_COST = 100
 DISPLAY_MULT = 5
 PER_POINT_VIZ = 100
@@ -52,6 +52,13 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.full_costmap_indices = []
         # Part of that costmap will be sampled to get the ground truth NN costmap
         self.nn_costmap_subsampling_indices = []
+        # Controlling the location of the 10 points in the NN costmap in terms of vectors: 
+        # (angle from robot, length of vector)
+        self.nn_costmap_point_locs = [(np.pi/4, 0.4), (-np.pi/4, 0.4), 
+                                        (np.pi/4, 0.8), (0, 0.8), (-np.pi/4, 0.8), 
+                                        (np.pi/6, 1.35), (0, 1.35), (-np.pi/6, 1.35), 
+                                        (np.pi/18, 1.75), (-np.pi/18, 1.75)]
+        self.use_controlled_locations = True
 
         # Printing to files
         self.analytical_gradient_computation = True 
@@ -275,11 +282,29 @@ class AvgDifferentiablePlanner(NNPlanner):
         costs = np.expand_dims(costs, axis=1)
         full_costmap_n4 = np.hstack([full_costmap, costs])
 
-        if len(self.nn_costmap_subsampling_indices) == 0:  
-            # Generate self.nn_costmap_subsampling_indices once
-            self.nn_costmap_subsampling_indices = \
-                np.random.choice(num_desired_waypoints, len_costmap, replace=False)
-        nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
+        if self.use_controlled_locations: 
+            nn_costmap_true = []
+            for elem in self.nn_costmap_point_locs:
+                angle = elem[0] + dummy_start_config[2]
+                length = elem[1]
+                vector = length * np.array([np.cos(angle), np.sin(angle), 0])
+                loc = dummy_start_config + vector
+                loc[2] = angle
+                loc_sys_config = self.convert_state_arr_to_config(loc)
+                cost, _ = self.eval_objective(dummy_start_sys_config, loc_sys_config)
+                cost = cost.numpy()
+                point = np.hstack([loc, cost])
+                nn_costmap_true.append(point) 
+            nn_costmap_true = np.stack(nn_costmap_true)
+            # For visualization reasons
+            if num_desired_waypoints == self.len_costmap:
+                full_costmap_n4 = nn_costmap_true  
+        else: 
+            if len(self.nn_costmap_subsampling_indices) == 0:  
+                # Generate self.nn_costmap_subsampling_indices once
+                self.nn_costmap_subsampling_indices = \
+                    np.random.choice(num_desired_waypoints, len_costmap, replace=False)
+            nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
 
         return full_costmap_n4, nn_costmap_true, optimal_cost, optimal_waypoint
 
@@ -401,7 +426,7 @@ class AvgDifferentiablePlanner(NNPlanner):
             data = self.get_gradient_one_data_point(start_config, uncertainty_mode)
             dummy_start_config = data['dummy_start_config']
             jacobian = data['jacobian']
-            cost_grad = data['jacobian']
+            cost_grad = data['cost_grad']
             final_grads = data['final_grads']
             percent_cost_grad = data['percent_cost_grad']
             plan_cost = data['plan_cost']
@@ -732,9 +757,30 @@ class AvgDifferentiablePlanner(NNPlanner):
         print("Minimum criticality:", min(criticalities))
         print("Maximum criticality:", max(criticalities), "\n")
 
+        # Linear interpolation to get colors wrt criticalities 
+        mean_criticality = np.mean(criticalities)
+        std_criticality = np.std(criticalities)
+        print("MEAN, STD", mean_criticality, std_criticality)
+        #rng = max(criticalities) - min(criticalities)
+        num_stds = 0.2
+        rng = 2*num_stds * std_criticality   # On either side of mean
+        print("RANGE:", rng)
+        min_color = np.array([0.2, 0.2, 0.6])  
+        max_color = np.array([0.0, 0.0, 1.0])  
+        slope = (max_color - min_color)/rng
+        def get_color(criticality): 
+            if criticality < mean_criticality - num_stds * std_criticality:
+                return min_color
+            elif criticality > mean_criticality + num_stds * std_criticality:
+                return max_color
+            else:
+                return min_color + slope * (criticality - min(criticalities))
+
+
         # lut = len(criticalities)
-        lut = int(max(criticalities) - min(criticalities))
+        lut = 5 #int(max(criticalities) - min(criticalities))
         viridis = cm.get_cmap('coolwarm', lut)
+        print(viridis(0), viridis(0.1), viridis(0.5), viridis(1), viridis(2), viridis(3), viridis(4), viridis(5), viridis(6))
         sorted_criticalities = np.sort(criticalities)
         ind_sorted_criticalities = np.argsort(criticalities)
         sorted_points = points[ind_sorted_criticalities]
@@ -746,9 +792,10 @@ class AvgDifferentiablePlanner(NNPlanner):
         for i in range(len(sorted_points)):
             point = sorted_points[i]
             point_config = self.convert_state_arr_to_config(point)
+            # point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
+            #                      marker='o', color=viridis(sorted_criticalities[i]))
             point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
-                                 marker='o', color=viridis(sorted_criticalities[i]))
-        
+                                 marker='o', color=get_color(sorted_criticalities[i]))
         if figname is None:
             fig.savefig('critical_points_heatmap.png')
         else:
@@ -760,13 +807,16 @@ class AvgDifferentiablePlanner(NNPlanner):
             for i in range(len(points)):
                 point = points[i]
                 criticality = criticalities[i]
-                print("Point and its criticality:", point, criticality)
+                print("Point and its criticality:", point, criticality, get_color(criticality))
                 
                 fig, ax = plt.subplots(figsize=(10, 11))
                 self.simulator._render_obstacle_map(ax, plotting_grid_steps)
                 point_config = self.convert_state_arr_to_config(point)
+                # point_config.render(ax, batch_idx=0, plot_quiver=True,
+                #                     marker='o', color=viridis(criticality), 
+                #                     markersize=17)
                 point_config.render(ax, batch_idx=0, plot_quiver=True,
-                                    marker='o', color=viridis(criticality), 
+                                    marker='o', color=get_color(criticality), 
                                     markersize=17)
                 fig.savefig('single_point_on_map.png')
                 time.sleep(5)
