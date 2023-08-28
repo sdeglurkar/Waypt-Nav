@@ -10,7 +10,7 @@ from trajectory.trajectory import Trajectory, SystemConfig
 NUM_DESIRED_WAYPOINTS = 1000
 DISPLAY_GRADIENTS = False
 DUMMY_SC = [9, 19, np.pi/6] #[9.39883102, 19.28911387, 2.57399193]
-SIZE_DATASET = 35
+SIZE_DATASET = 1000
 OBSTACLE_COST = 100
 DISPLAY_MULT = 5
 PER_POINT_VIZ = 100
@@ -492,17 +492,17 @@ class AvgDifferentiablePlanner(NNPlanner):
                 criticalities, decision_criticalities, non_failed_decision_criticalities,\
                 non_failed_cost_criticalities, non_failed_badnesses = \
                 self.visualize_dataset_info(dataset_info)
-        # print("Critical points heatmap: plan")
-        # self.visualize_critical_points(points, plan_criticalities, 
-        #                                 figname='plan_critical_points_heatmap', plot_quiver=False)
-        # print("Critical points heatmap: decision")
-        # self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
-        #                                 figname='decision_critical_points_heatmap', plot_quiver=False)
+        print("Critical points heatmap: plan")
+        self.visualize_critical_points(points, plan_criticalities, rng=[0, 10],
+                                        figname='plan_critical_points_heatmap', plot_quiver=False)
+        print("Critical points heatmap: decision")
+        self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
+                                        figname='decision_critical_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: cost")
         self.visualize_critical_points(non_failed_points, non_failed_cost_criticalities, 
                                         figname='cost_critical_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: badness")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), 
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), rng=[0, 0.5],
                                         figname='decision_critical_badness_points_heatmap', plot_quiver=False)
         
 
@@ -749,33 +749,34 @@ class AvgDifferentiablePlanner(NNPlanner):
                 criticalities, decision_criticalities, non_failed_decision_criticalities, \
                 non_failed_cost_criticalities, non_failed_badnesses
 
-    def visualize_critical_points(self, points, criticalities, figname=None, plot_quiver=True):
+    def visualize_critical_points(self, points, criticalities, rng=[0, 20], figname=None, plot_quiver=True):
         '''
         Plot a heatmap-style plot of various points according to how
         critical they are.
+        rng should be tuned by hand based on the histogram plotted below.
         '''
         print("Minimum criticality:", min(criticalities))
         print("Maximum criticality:", max(criticalities), "\n")
+        
+        # Visualize criticalities distribution
+        fig, ax = plt.subplots(figsize=(10, 11))
+        plt.hist(criticalities)
+        if figname is None:
+            fig.savefig('criticalities_histogram.png')
+        else:
+            fig.savefig(figname + '_histogram.png')
 
         # Linear interpolation to get colors wrt criticalities 
-        mean_criticality = np.mean(criticalities)
-        std_criticality = np.std(criticalities)
-        print("MEAN, STD", mean_criticality, std_criticality)
-        #rng = max(criticalities) - min(criticalities)
-        num_stds = 0.2
-        rng = 2*num_stds * std_criticality   # On either side of mean
-        print("RANGE:", rng)
-        min_color = np.array([0.2, 0.2, 0.6])  
-        max_color = np.array([0.0, 0.0, 1.0])  
-        slope = (max_color - min_color)/rng
+        min_color = np.array([0.6, 0.6, 0.6])  
+        max_color = np.array([1.0, 0.0, 0.0])  
+        slope = (max_color - min_color)/(rng[1] - rng[0])
         def get_color(criticality): 
-            if criticality < mean_criticality - num_stds * std_criticality:
+            if criticality <= rng[0]: 
                 return min_color
-            elif criticality > mean_criticality + num_stds * std_criticality:
+            elif criticality >= rng[1]: 
                 return max_color
             else:
                 return min_color + slope * (criticality - min(criticalities))
-
 
         # lut = len(criticalities)
         lut = 5 #int(max(criticalities) - min(criticalities))
