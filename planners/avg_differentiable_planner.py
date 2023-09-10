@@ -1,19 +1,19 @@
-from logging import critical
 from matplotlib import cm
 import matplotlib.pyplot as plt
 import numpy as np
-import tensorflow as tf
 from planners.nn_planner import NNPlanner
+import sys 
+import tensorflow as tf
 import time
 from trajectory.trajectory import Trajectory, SystemConfig
 
 NUM_DESIRED_WAYPOINTS = 1000
 DISPLAY_GRADIENTS = False
-DUMMY_SC = [9, 19, np.pi/6] #[9.39883102, 19.28911387, 2.57399193]
+DUMMY_SC = [8.5, 10.5, 0.0] #[9, 19, np.pi/6] #[9.39883102, 19.28911387, 2.57399193]
 SIZE_DATASET = 1000
 OBSTACLE_COST = 100
 DISPLAY_MULT = 5
-PER_POINT_VIZ = 100
+PER_POINT_VIZ = 50
 
 
 class AvgDifferentiablePlanner(NNPlanner):
@@ -272,8 +272,17 @@ class AvgDifferentiablePlanner(NNPlanner):
         obj_vals = obj_vals.numpy()
         optimal_cost = np.min(obj_vals)
         optimal_cost_ind = np.argmin(obj_vals)
+        obstacle_obj_vals = obj_vals[np.where(obj_vals > OBSTACLE_COST)]
+        percent_obstacle = len(obstacle_obj_vals)/len(obj_vals)
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
         waypts = waypts.position_and_heading_nk3().numpy()
+        distances_from_start = np.linalg.norm(np.squeeze(waypts)[:, :2] -  \
+                                np.reshape(dummy_start_config[:2], (1, 2)), axis=1)
+        CLOSE_DISTANCE = 0.6
+        close_points_ind = np.where(distances_from_start < CLOSE_DISTANCE)
+        close_points_obj_vals = obj_vals[close_points_ind]
+        obstacle_obj_vals_close = close_points_obj_vals[np.where(close_points_obj_vals > OBSTACLE_COST)]
+        percent_obstacle_close = len(obstacle_obj_vals_close)/len(obstacle_obj_vals)
         optimal_waypoint = np.squeeze(waypts[optimal_cost_ind])
         if len(self.full_costmap_indices) == 0:  # Generate self.full_costmap_indices once
             self.full_costmap_indices = np.random.choice(len(waypts), num_desired_waypoints, replace=False)
@@ -306,7 +315,14 @@ class AvgDifferentiablePlanner(NNPlanner):
                     np.random.choice(num_desired_waypoints, len_costmap, replace=False)
             nn_costmap_true = full_costmap_n4[self.nn_costmap_subsampling_indices]
 
-        return full_costmap_n4, nn_costmap_true, optimal_cost, optimal_waypoint
+        return_dict = {'full_costmap_n4': full_costmap_n4,
+                        'nn_costmap_true': nn_costmap_true,
+                        'optimal_cost': optimal_cost,
+                        'optimal_waypoint': optimal_waypoint,
+                        'percent_obstacle': percent_obstacle,
+                        'percent_obstacle_close': percent_obstacle_close
+                        }
+        return return_dict 
 
     def get_gradient_one_data_point(self, dummy_start_config, 
                                     num_desired_waypoints=NUM_DESIRED_WAYPOINTS, 
@@ -316,8 +332,13 @@ class AvgDifferentiablePlanner(NNPlanner):
         ground truth costmap for that config. It then simulates the neural network 
         output from that and then computes the planner gradient. 
         '''
-        full_costmap_n4, true_costmap_n4, optimal_cost, optimal_waypoint = \
-            self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
+        data = self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
+        full_costmap_n4 = data['full_costmap_n4'] 
+        true_costmap_n4 = data['nn_costmap_true'] 
+        optimal_cost = data['optimal_cost'] 
+        optimal_waypoint = data['optimal_waypoint']
+        percent_obstacle = data['percent_obstacle']
+        percent_obstacle_close = data['percent_obstacle_close']
         
         # The optimal waypoint in the NN ground truth costmap
         best_cost_costmap = np.min(true_costmap_n4[:, 3])
@@ -355,6 +376,7 @@ class AvgDifferentiablePlanner(NNPlanner):
             self.one_pt_gradient_file.write("\nOptimal Plan: " + str(optimal_waypoint))
             self.one_pt_gradient_file.write("\nOptimal Cost from NN Costmap: " + str(best_cost_costmap))
             self.one_pt_gradient_file.write("\nOptimal Waypoint from NN Costmap: " + str(best_waypoint_costmap))
+            self.one_pt_gradient_file.write("\nPercent Obstacle: " + str(percent_obstacle))
             self.one_pt_gradient_file.write("\nPercent Difference Between Plan Cost and Optimal Cost from NN Costmap: " +
                                                 str((plan_cost - best_cost_costmap)/best_cost_costmap))
             self.one_pt_gradient_file.write("\nSame as above wrt plan cost: " +
@@ -381,6 +403,8 @@ class AvgDifferentiablePlanner(NNPlanner):
                         'plan_cost': plan_cost,
                         'optimal_cost': optimal_cost,
                         'optimal_waypoint': optimal_waypoint,
+                        'percent_obstacle': percent_obstacle,
+                        'percent_obstacle_close': percent_obstacle_close,
                         'best_cost_costmap': best_cost_costmap,
                         'best_waypoint_costmap': best_waypoint_costmap}
         return return_dict
@@ -431,6 +455,8 @@ class AvgDifferentiablePlanner(NNPlanner):
             percent_cost_grad = data['percent_cost_grad']
             plan_cost = data['plan_cost']
             best_cost_costmap = data['best_cost_costmap'] 
+            percent_obstacle = data['percent_obstacle']
+            percent_obstacle_close = data['percent_obstacle_close']
 
             cost_criticality = tf.norm(cost_grad, ord=np.inf).numpy()
             plan_criticality = tf.abs(tf.reduce_max(jacobian)).numpy()
@@ -445,7 +471,9 @@ class AvgDifferentiablePlanner(NNPlanner):
                             'criticality': criticality, 
                             'badness': badness,
                             'cost_of_start_config': obj_val,
-                            'plan_cost': plan_cost}
+                            'plan_cost': plan_cost,
+                            'percent_obstacle': percent_obstacle,
+                            'percent_obstacle_close': percent_obstacle_close}
             dataset_info.append(analysis_data)
         
         print("Finished the dataset!")
@@ -490,10 +518,11 @@ class AvgDifferentiablePlanner(NNPlanner):
         points, non_failed_points, plan_critical_points, cost_critical_points, critical_points, \
                 decision_critical_points, badnesses, cost_criticalities, plan_criticalities, \
                 criticalities, decision_criticalities, non_failed_decision_criticalities,\
-                non_failed_cost_criticalities, non_failed_badnesses = \
+                non_failed_cost_criticalities, non_failed_badnesses, non_failed_percent_obstacles,\
+                non_failed_percent_obstacles_close = \
                 self.visualize_dataset_info(dataset_info)
         print("Critical points heatmap: plan")
-        self.visualize_critical_points(points, plan_criticalities, rng=[0, 10],
+        self.visualize_critical_points(points, plan_criticalities, rng=[0, 5],
                                         figname='plan_critical_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: decision")
         self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
@@ -504,8 +533,15 @@ class AvgDifferentiablePlanner(NNPlanner):
         print("Critical points heatmap: badness")
         self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), rng=[0, 0.5],
                                         figname='decision_critical_badness_points_heatmap', plot_quiver=False)
+        print("Critical points heatmap: percent obstacle")
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles), rng=[0, 0.8],
+                                        figname='percent_obstacle_heatmap', plot_quiver=False)
+        print("Critical points heatmap: percent obstacle close")
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles_close), rng=[0, 0.3],
+                                        figname='percent_obstacle_close_heatmap', plot_quiver=False)
         
 
+        sys.exit()
         # All of the rest of this function is needed for this planner to work with the 
         # rest of the codebase
         # Get the optimal trajectory
@@ -616,6 +652,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         criticalities = [data['criticality'] for data in dataset_info]
         costs_of_points = [data['cost_of_start_config'] for data in dataset_info]
         plan_costs = [data['plan_cost'] for data in dataset_info]
+        percent_obstacles = [data['percent_obstacle'] for data in dataset_info]
+        percent_obstacles_close = [data['percent_obstacle_close'] for data in dataset_info]
 
         badnesses = np.clip(badnesses, -10, 100)
         cost_criticalities = np.clip(cost_criticalities, 0, 200)
@@ -704,11 +742,15 @@ class AvgDifferentiablePlanner(NNPlanner):
             non_failed_decision_criticalities = np.array(decision_criticalities)[non_failed_ind]
             non_failed_cost_criticalities = np.array(cost_criticalities)[non_failed_ind]
             non_failed_badnesses = np.array(badnesses)[non_failed_ind]
+            non_failed_percent_obstacles = np.array(percent_obstacles)[non_failed_ind]
+            non_failed_percent_obstacles_close = np.array(percent_obstacles_close)[non_failed_ind]
         else:
             non_failed_points = points
             non_failed_decision_criticalities = decision_criticalities
             non_failed_cost_criticalities = cost_criticalities
             non_failed_badnesses = badnesses
+            non_failed_percent_obstacles = percent_obstacles
+            non_failed_percent_obstacles_close = percent_obstacles_close
 
 
         # Plots - relationships between variables
@@ -747,7 +789,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         return points, non_failed_points, plan_critical_points, cost_critical_points, critical_points, \
                 decision_critical_points, badnesses, cost_criticalities, plan_criticalities, \
                 criticalities, decision_criticalities, non_failed_decision_criticalities, \
-                non_failed_cost_criticalities, non_failed_badnesses
+                non_failed_cost_criticalities, non_failed_badnesses, non_failed_percent_obstacles, \
+                non_failed_percent_obstacles_close
 
     def visualize_critical_points(self, points, criticalities, rng=[0, 20], figname=None, plot_quiver=True):
         '''
