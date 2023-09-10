@@ -9,11 +9,11 @@ from trajectory.trajectory import Trajectory, SystemConfig
 
 NUM_DESIRED_WAYPOINTS = 1000
 DISPLAY_GRADIENTS = False
-DUMMY_SC = [8.5, 10.5, 0.0] #[9, 19, np.pi/6] #[9.39883102, 19.28911387, 2.57399193]
+DUMMY_SC = [8.5, 10.5, 0.0] #[9.39883102, 19.28911387, 2.57399193]
 SIZE_DATASET = 1000
 OBSTACLE_COST = 100
 DISPLAY_MULT = 5
-PER_POINT_VIZ = 50
+PER_POINT_VIZ = 35
 
 
 class AvgDifferentiablePlanner(NNPlanner):
@@ -522,7 +522,7 @@ class AvgDifferentiablePlanner(NNPlanner):
                 non_failed_percent_obstacles_close = \
                 self.visualize_dataset_info(dataset_info)
         print("Critical points heatmap: plan")
-        self.visualize_critical_points(points, plan_criticalities, rng=[0, 5],
+        self.visualize_critical_points(points, plan_criticalities, #rng=[0, 5],
                                         figname='plan_critical_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: decision")
         self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
@@ -531,13 +531,13 @@ class AvgDifferentiablePlanner(NNPlanner):
         self.visualize_critical_points(non_failed_points, non_failed_cost_criticalities, 
                                         figname='cost_critical_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: badness")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), rng=[0, 0.5],
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), #rng=[0, 0.5],
                                         figname='decision_critical_badness_points_heatmap', plot_quiver=False)
         print("Critical points heatmap: percent obstacle")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles), rng=[0, 0.8],
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles), #rng=[0, 0.8],
                                         figname='percent_obstacle_heatmap', plot_quiver=False)
         print("Critical points heatmap: percent obstacle close")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles_close), rng=[0, 0.3],
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles_close), #rng=[0, 0.3],
                                         figname='percent_obstacle_close_heatmap', plot_quiver=False)
         
 
@@ -792,11 +792,10 @@ class AvgDifferentiablePlanner(NNPlanner):
                 non_failed_cost_criticalities, non_failed_badnesses, non_failed_percent_obstacles, \
                 non_failed_percent_obstacles_close
 
-    def visualize_critical_points(self, points, criticalities, rng=[0, 20], figname=None, plot_quiver=True):
+    def visualize_critical_points(self, points, criticalities, percentile_rng=[20, 80], figname=None, plot_quiver=True):
         '''
         Plot a heatmap-style plot of various points according to how
         critical they are.
-        rng should be tuned by hand based on the histogram plotted below.
         '''
         print("Minimum criticality:", min(criticalities))
         print("Maximum criticality:", max(criticalities), "\n")
@@ -808,15 +807,18 @@ class AvgDifferentiablePlanner(NNPlanner):
             fig.savefig('criticalities_histogram.png')
         else:
             fig.savefig(figname + '_histogram.png')
+        
+        rng_low = np.percentile(criticalities, percentile_rng[0])
+        rng_high = np.percentile(criticalities, percentile_rng[1])
 
         # Linear interpolation to get colors wrt criticalities 
         min_color = np.array([0.6, 0.6, 0.6])  
         max_color = np.array([1.0, 0.0, 0.0])  
-        slope = (max_color - min_color)/(rng[1] - rng[0])
+        slope = (max_color - min_color)/(rng_high - rng_low)
         def get_color(criticality): 
-            if criticality <= rng[0]: 
+            if criticality <= rng_low: 
                 return min_color
-            elif criticality >= rng[1]: 
+            elif criticality >= rng_high: 
                 return max_color
             else:
                 return min_color + slope * (criticality - min(criticalities))

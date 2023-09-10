@@ -84,7 +84,6 @@ class SBPDSimulator(Simulator):
         so just update the goal position.
         """
         if hasattr(self, 'fmm_map'):
-            print("\n\nGOAL CONFIG", self.goal_config.position_and_heading_nk3())
             goal_pos_n2 = self.goal_config.position_nk2()[:, 0]
             self.fmm_map.change_goal(goal_pos_n2)
         else:
