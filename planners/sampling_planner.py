@@ -37,29 +37,10 @@ class SamplingPlanner(Planner):
         min_cost = obj_vals[min_idx]
 
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
-
-        print("Inside optimize, sampling planner")
-        print("\n\nSTART CONFIG", start_config.position_and_heading_nk3())
-        print("\n\nWAYPTS", waypts.position_and_heading_nk3()[:50])
-        print(waypts.position_and_heading_nk3()[200:220])
-        print(waypts.position_and_heading_nk3()[1000:1010])
-        print(waypts.position_and_heading_nk3()[2002:2030])
-        print("WAYPTS, EGO COORDS")
         waypts_ego = Trajectory(dt=self.params.dt, n=waypts.n, k=waypts.k)
         self.params.system_dynamics.to_egocentric_coordinates(start_config,
                                                             waypts,
                                                             waypts_ego)
-        print(waypts_ego.position_and_heading_nk3()[:50])
-        print(waypts_ego.position_and_heading_nk3()[200:220])
-        print(waypts_ego.position_and_heading_nk3()[1000:1010])
-        print(waypts_ego.position_and_heading_nk3()[2002:2030])
-        
-        # import numpy as np
-        # w = waypts.position_and_heading_nk3().numpy() - start_config.position_and_heading_nk3().numpy()
-        # full_costmap_indices = np.random.choice(len(w), 1000, replace=False)
-        # print("Full costmap", w, w[full_costmap_indices])
-        # full_costmap = np.squeeze(w[full_costmap_indices])
-        # print("Full costmap", full_costmap[:30, :])
 
         self.opt_waypt.assign_from_config_batch_idx(waypts, min_idx)
         self.opt_traj.assign_from_trajectory_batch_idx(trajectories_lqr, min_idx)
