@@ -137,11 +137,6 @@ class ExtendedSamplingCostsPlanner(Planner):
         min_cost = obj_vals[min_idx]
 
         waypts, horizons_s, trajectories_lqr, trajectories_spline, controllers = data
-        waypts_ego = Trajectory(dt=self.params.dt, n=waypts.n, k=waypts.k)
-        self.params.system_dynamics.to_egocentric_coordinates(start_config,
-                                                            waypts,
-                                                            waypts_ego)
-
         self.opt_waypt.assign_from_config_batch_idx(waypts, min_idx)
         self.opt_traj.assign_from_trajectory_batch_idx(trajectories_lqr, min_idx)
 
