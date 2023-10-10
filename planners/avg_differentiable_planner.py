@@ -523,43 +523,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         # Analyze gradients for a dataset of robot poses
         dataset_info = self.get_gradients_dataset(fixed_theta=0.0)
         data = self.process_dataset_info(dataset_info, 
-                                        visualize_critical_pts_threshold=False, 
-                                        plot_relationships=False)
-
-        points = data['points']
-        plan_criticalities = data['plan_criticalities']
-        non_failed_points = data['non_failed_points']
-        non_failed_decision_criticalities = data['non_failed_decision_criticalities']
-        non_failed_cost_criticalities = data['non_failed_cost_criticalities']
-        non_failed_badnesses = data['non_failed_badnesses']
-        non_failed_percent_obstacles = data['non_failed_percent_obstacles']
-        non_failed_percent_obstacles_close = data['non_failed_percent_obstacles_close']
-        
-        if self.dataset_gradients:    
-            self.dataset_gradients_file.write("\n\nCritical points heatmap: plan")
-        self.visualize_critical_points(points, plan_criticalities, 
-                                        figname='plan_critical_points_heatmap', plot_quiver=False)
-        if self.dataset_gradients:    
-            self.dataset_gradients_file.write("\n\nCritical points heatmap: decision")
-        self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
-                                        figname='decision_critical_points_heatmap', plot_quiver=False)
-        if self.dataset_gradients:    
-            self.dataset_gradients_file.write("\n\nCritical points heatmap: cost")
-        self.visualize_critical_points(non_failed_points, non_failed_cost_criticalities, 
-                                        figname='cost_critical_points_heatmap', plot_quiver=False)
-        if self.dataset_gradients:    
-            self.dataset_gradients_file.write("\n\nCritical points heatmap: badness")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), 
-                                        figname='decision_critical_badness_points_heatmap', plot_quiver=False)
-        if self.dataset_gradients:    
-            self.dataset_gradients_file.write("\n\nCritical points heatmap: percent obstacle")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles), 
-                                        figname='percent_obstacle_heatmap', plot_quiver=False)
-        if self.dataset_gradients:    
-            self.dataset_gradients_file.write("\n\nCritical points heatmap: percent obstacle close")
-        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles_close), 
-                                        figname='percent_obstacle_close_heatmap', plot_quiver=False)
-        
+                                        visualize_critical_pts_threshold=True, 
+                                        plot_relationships=True)
 
         sys.exit()
         # All of the rest of this function is needed for this planner to work with the 
@@ -607,7 +572,6 @@ class AvgDifferentiablePlanner(NNPlanner):
         plan = np.reshape(plan, (1,3))
         additional_waypoints = [np.reshape(waypoint, (3,)) for waypoint in additional_waypoints]
         additional_waypoints = np.stack(additional_waypoints)
-
         total_waypoints = np.vstack([costmap[:, :3], plan, additional_waypoints])
         total_costs = np.hstack([costmap[:, 3], plan_cost, additional_costs])
 
@@ -643,8 +607,8 @@ class AvgDifferentiablePlanner(NNPlanner):
     def process_dataset_info(self, dataset_info, visualize_critical_pts_threshold=False,
                                 plot_relationships=False):
         '''
-        Plot plan and task critical points (points that have criticalities above
-        a threshold). Additionally plot the relationships between various variables.
+        Plot plan and task critical points. Additionally plot the relationships between 
+        various variables.
         '''
         points = np.stack([data['dummy_start_config'] for data in dataset_info])
         badnesses = [data['badness'] for data in dataset_info]
@@ -662,6 +626,8 @@ class AvgDifferentiablePlanner(NNPlanner):
         criticalities = np.clip(criticalities, 0, 1000)
         decision_criticalities = np.clip(decision_criticalities, 0, 200)
 
+        # Failed points are points for which the plan is in an obstacle - don't analyze
+        # those
         failed_plan_ind = np.argwhere(np.array(plan_costs) > FAILED_PLAN_THRES)
         failed_plan_ind = np.squeeze(failed_plan_ind, axis=1)
 
@@ -712,12 +678,44 @@ class AvgDifferentiablePlanner(NNPlanner):
             scatter_plotter(costs_of_points, criticalities, "Costs of Points vs Criticality", 
                             "Cost of Point", "Criticality", 'cost_of_point_vs_criticality.png')
 
+        # Visualize critical points if the criticality is above a threshold
         if visualize_critical_pts_threshold:
-            plan_critical_points, cost_critical_points, decision_critical_points, critical_points = \
+            plan_critical_points, cost_critical_points, decision_critical_points, critical_points, \
+            badness_points, percent_obstacle_points, percent_obstacle_close_points = \
                 self.visualize_critical_points_above_threshold(points, plan_criticalities, 
-                                                    cost_criticalities, decision_criticalities, 
-                                                    criticalities, failed_plan_ind)
-
+                                                    non_failed_cost_criticalities, 
+                                                    non_failed_decision_criticalities, 
+                                                    criticalities,
+                                                    non_failed_badnesses,
+                                                    non_failed_percent_obstacles,
+                                                    non_failed_percent_obstacles_close)
+        
+        # Visualize all critical points in a heatmap format
+        if self.dataset_gradients:    
+            self.dataset_gradients_file.write("\n\nCritical points heatmap: plan")
+        self.visualize_critical_points(points, plan_criticalities, 
+                                        figname='plan_critical_points_heatmap', plot_quiver=False)
+        if self.dataset_gradients:    
+            self.dataset_gradients_file.write("\n\nCritical points heatmap: decision")
+        self.visualize_critical_points(non_failed_points, non_failed_decision_criticalities, 
+                                        figname='decision_critical_points_heatmap', plot_quiver=False)
+        if self.dataset_gradients:    
+            self.dataset_gradients_file.write("\n\nCritical points heatmap: cost")
+        self.visualize_critical_points(non_failed_points, non_failed_cost_criticalities, 
+                                        figname='cost_critical_points_heatmap', plot_quiver=False)
+        if self.dataset_gradients:    
+            self.dataset_gradients_file.write("\n\nCritical points heatmap: badness")
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_badnesses), 
+                                        figname='decision_critical_badness_points_heatmap', plot_quiver=False)
+        if self.dataset_gradients:    
+            self.dataset_gradients_file.write("\n\nCritical points heatmap: percent obstacle")
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles), 
+                                        figname='percent_obstacle_heatmap', plot_quiver=False)
+        if self.dataset_gradients:    
+            self.dataset_gradients_file.write("\n\nCritical points heatmap: percent obstacle close")
+        self.visualize_critical_points(non_failed_points, np.abs(non_failed_percent_obstacles_close), 
+                                        figname='percent_obstacle_close_heatmap', plot_quiver=False)
+        
         return_dict = {'points': points,
                         'non_failed_points': non_failed_points,
                         'badnesses': badnesses,
@@ -739,9 +737,19 @@ class AvgDifferentiablePlanner(NNPlanner):
         
         return return_dict
 
-    def visualize_critical_points_above_threshold(self, points, plan_criticalities, cost_criticalities,
-                                                decision_criticalities, criticalities, failed_plan_ind,
+    def visualize_critical_points_above_threshold(self, points, plan_criticalities, 
+                                                cost_criticalities, decision_criticalities, 
+                                                criticalities, badnesses,
+                                                percent_obstacles,
+                                                percent_obstacles_close,
                                                 percentile_threshold=70):
+        '''
+        Plot points on the map that have high `criticality' values for each of plan_criticalities,
+        cost_criticalities, decision_criticalities, and criticalities. It is assumed that these are
+        all criticalities for points with non-failed plans. Criticality values are high if they are
+        above a percentile threshold.
+        '''
+        # Helper function to plot robot poses on the obstacle map
         def plot_points_on_map(points, figname, markersize=14, 
                                 plotting_grid_steps=150, plot_quiver=True):
             fig, ax = plt.subplots(figsize=(10, 11))
@@ -753,71 +761,50 @@ class AvgDifferentiablePlanner(NNPlanner):
                 point_config.render(ax, batch_idx=0, plot_quiver=plot_quiver,
                                     marker='o', color='b', markersize=markersize)
             fig.savefig(IMAGE_PATH + figname)
-
-        ### Plan Critical Points ###
-        plan_critical_threshold = np.percentile(plan_criticalities, percentile_threshold)
-        plan_critical_ind = np.argwhere(np.array(plan_criticalities) >= plan_critical_threshold)
-        plan_critical_ind = np.squeeze(plan_critical_ind, axis=1)
-        plan_critical_points = []
-        if len(plan_critical_ind) != 0:
-            plan_critical_points = points[plan_critical_ind]
-            if self.dataset_gradients:    
-                self.dataset_gradients_file.write("\nPlan Critical Points: " + str(plan_critical_points))
         
+        # Helper function to get the points that have high criticalities
+        def get_critical_points_above_thres(criticalities, print_statement):
+            critical_threshold = np.percentile(criticalities, percentile_threshold)
+            critical_ind = np.argwhere(np.array(criticalities) >= critical_threshold)
+            critical_ind = np.squeeze(critical_ind, axis=1)
+            critical_points = []
+            if len(critical_ind) != 0:
+                critical_points = points[critical_ind]
+                if self.dataset_gradients:    
+                    self.dataset_gradients_file.write(print_statement + str(critical_points))
+            return critical_points
+
+        # Plan Critical Points
+        plan_critical_points = get_critical_points_above_thres(plan_criticalities, "\nPlan Critical Points: ")
         plot_points_on_map(plan_critical_points, 'plan_critical_points.png')
         
-        ### Cost Critical Points ###
-        cost_critical_threshold = np.percentile(cost_criticalities, percentile_threshold)
-        cost_critical_ind = np.argwhere(np.array(cost_criticalities) >= cost_critical_threshold)
-        cost_critical_ind = np.squeeze(cost_critical_ind, axis=1)
-        
-        cost_critical_points = []
-        if len(cost_critical_ind) != 0:
-            cost_critical_points = points[cost_critical_ind]
-            if len(failed_plan_ind) != 0:
-                # Take points that are cost critical but whose plan has not failed
-                subtraction_ind = list(set(list(cost_critical_ind)) - set(list(failed_plan_ind)))
-                subtraction_ind = np.array(subtraction_ind)
-                cost_critical_points = points[subtraction_ind]
-            if self.dataset_gradients:    
-                self.dataset_gradients_file.write("\nCost Critical Points: " + str(cost_critical_points)) 
-
+        # Cost Critical Points 
+        cost_critical_points = get_critical_points_above_thres(cost_criticalities, "\nCost Critical Points: ")
         plot_points_on_map(cost_critical_points, 'cost_critical_points.png')
         
-        ### Decision Critical Points ###
-        decision_critical_threshold = np.percentile(decision_criticalities, percentile_threshold)
-        decision_critical_ind = np.argwhere(np.array(decision_criticalities) >= decision_critical_threshold)
-        decision_critical_ind = np.squeeze(decision_critical_ind, axis=1)
-        
-        decision_critical_points = []
-        if len(decision_critical_ind) != 0:
-            decision_critical_points = points[decision_critical_ind]
-            plan_criticalities_decision_critical = np.array(plan_criticalities)[decision_critical_ind]
-            if len(failed_plan_ind) != 0:
-                # Take points that are decision critical but whose plan has not failed
-                subtraction_ind = list(set(list(decision_critical_ind)) - set(list(failed_plan_ind)))
-                subtraction_ind = np.array(subtraction_ind)
-                decision_critical_points = points[subtraction_ind]
-                plan_criticalities_decision_critical = np.array(plan_criticalities)[subtraction_ind]
-            if self.dataset_gradients:    
-                self.dataset_gradients_file.write("\nDecision Critical Points: " + str(decision_critical_points))
-                self.dataset_gradients_file.write("\nPlan Criticalities at those Points: " + str(plan_criticalities_decision_critical))
-        
+        # Decision Critical Points 
+        decision_critical_points = get_critical_points_above_thres(decision_criticalities, "\nDecision Critical Points: ")
         plot_points_on_map(decision_critical_points, 'decision_critical_points.png')
 
-        ### Overall Critical Points ###
-        critical_threshold = np.percentile(criticalities, percentile_threshold)
-        critical_ind = np.argwhere(np.array(criticalities) >= critical_threshold)
-        critical_ind = np.squeeze(critical_ind, axis=1)
-        critical_points = []
-        if len(critical_ind) != 0:
-            critical_points = points[critical_ind]
-            if self.dataset_gradients:    
-                self.dataset_gradients_file.write("\nOverall Critical Points: " + str(critical_points))
-        
+        # Overall Critical Points 
+        critical_points = get_critical_points_above_thres(criticalities, "\nOverall Critical Points: ")
         plot_points_on_map(critical_points, 'critical_points.png')
 
-        return plan_critical_points, cost_critical_points, decision_critical_points, critical_points
+        # Badness Values
+        badness_points = get_critical_points_above_thres(badnesses, "\nBadness Points: ")
+        plot_points_on_map(critical_points, 'badness_points.png')
+
+        # Percent Obstacle Critical Points
+        percent_obstacle_points = get_critical_points_above_thres(percent_obstacles, "\nPercent Obstacle Points: ")
+        plot_points_on_map(percent_obstacle_points, 'percent_obstacle_points.png')
+
+        # Percent Obstacle Nearby Critical Points
+        percent_obstacle_close_points = get_critical_points_above_thres(percent_obstacles_close, 
+                                                        "\nPercent Obstacle Nearby Points")
+        plot_points_on_map(percent_obstacle_close_points, 'percent_obstacle_close_points.png')
+
+        return plan_critical_points, cost_critical_points, decision_critical_points, critical_points, \
+                badness_points, percent_obstacle_points, percent_obstacle_close_points
 
     def visualize_critical_points(self, points, criticalities, percentile_rng=[5, 95], 
                                     figname=None, plot_quiver=True, 
@@ -879,7 +866,7 @@ class AvgDifferentiablePlanner(NNPlanner):
             for i in range(len(points)):
                 point = points[i]
                 criticality = criticalities[i]
-                print("Point and its criticality:", point, criticality, get_color(criticality))
+                print("Point and its criticality:", point, criticality)
                 
                 fig, ax = plt.subplots(figsize=(10, 11))
                 self.simulator._render_obstacle_map(ax, plotting_grid_steps)
@@ -888,7 +875,7 @@ class AvgDifferentiablePlanner(NNPlanner):
                                     marker='o', color=get_color(criticality), 
                                     markersize=17)
                 fig.savefig('single_point_on_map.png')
-                time.sleep(5)
+                # time.sleep(5)
 
                 data = self.get_gradient_one_data_point(dummy_start_config=point, num_desired_waypoints=10)
                 dummy_start_config = data['dummy_start_config']
@@ -908,9 +895,9 @@ class AvgDifferentiablePlanner(NNPlanner):
                 additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
 
                 display_uncertainties = (len(full_costmap_n4) <= DISPLAY_MULT*self.len_costmap)  # too many points to display
-                self.visualize_waypoints(dummy_start_config, nn_output_n4[:, :3], uncertainties, plan, plan_cost,
-                                        additional_waypoints, additional_costs, final_grads, display_uncertainties)
-                time.sleep(5)
+                self.visualize_waypoints(dummy_start_config, nn_output_n4, uncertainties, plan, plan_cost,
+                                        additional_waypoints, additional_costs, display_uncertainties)
+                # time.sleep(5)
 
 
 
