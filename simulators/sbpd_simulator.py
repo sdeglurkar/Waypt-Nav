@@ -95,8 +95,9 @@ class SBPDSimulator(Simulator):
         p = self.params.obstacle_map_params
         return p.obstacle_map(p)
 
-    def _render_obstacle_map(self, ax):
+    def _render_obstacle_map(self, ax, plotting_grid_steps=None):
         p = self.params
         self.obstacle_map.render_with_obstacle_margins(ax, start_config=self.start_config,
                                                        margin0=p.avoid_obstacle_objective.obstacle_margin0,
-                                                       margin1=p.avoid_obstacle_objective.obstacle_margin1)
+                                                       margin1=p.avoid_obstacle_objective.obstacle_margin1,
+                                                       plotting_grid_steps=plotting_grid_steps)

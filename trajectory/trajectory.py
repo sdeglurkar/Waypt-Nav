@@ -134,6 +134,17 @@ class Trajectory(object):
                                             angular_acceleration_nk1=trajectory.angular_acceleration_nk1()[batch_idx:batch_idx+1],
                                             valid_horizons_n1=trajectory.valid_horizons_n1[batch_idx:batch_idx+1])
 
+    def assign_from_trajectory_batch_indices(self, trajectory, batch_indices):
+        """Assigns a trajectory object's instance variables from the trajectory stored
+        at batch indices in trajectory."""
+        self.assign_trajectory_from_tensors(position_nk2=tf.gather(trajectory.position_nk2(), batch_indices),
+                                            speed_nk1=tf.gather(trajectory.speed_nk1(), batch_indices),
+                                            acceleration_nk1=tf.gather(trajectory.acceleration_nk1(), batch_indices),
+                                            heading_nk1=tf.gather(trajectory.heading_nk1(), batch_indices),
+                                            angular_speed_nk1=tf.gather(trajectory.angular_speed_nk1(), batch_indices),
+                                            angular_acceleration_nk1=tf.gather(trajectory.angular_acceleration_nk1(), batch_indices),
+                                            valid_horizons_n1=tf.gather(trajectory.valid_horizons_n1, batch_indices))
+    
     def assign_trajectory_from_tensors(self, position_nk2, speed_nk1, acceleration_nk1,
                                        heading_nk1, angular_speed_nk1, angular_acceleration_nk1,
                                        valid_horizons_n1):
