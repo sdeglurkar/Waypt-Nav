@@ -8,7 +8,7 @@ import time
 from trajectory.trajectory import Trajectory, SystemConfig
 
 NUM_DESIRED_WAYPOINTS = 10 #1000  # How many points in the costmap to visualize for 1 robot pose
-DUMMY_SC = [8.5, 10.5, 0.0] # Dummy start config -- getting the gradient at 1 data point
+DUMMY_SC = [6.0, 18.5, 0.0] # Dummy start config -- getting the gradient at 1 data point
 SIZE_DATASET = 1000  # Number of points to evaluate gradients for
 OBSTACLE_COST = 100  # Defining the cost of an obstacle 
 FAILED_PLAN_THRES = 1000  # Don't analyze criticalities for "failure" points
@@ -151,13 +151,24 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
 
         return obj_val.numpy(), data
     
-    def sample_uncertainties(self, num_points):
+    def sample_uncertainties(self, num_points, mode='one_index', index=None):
         '''
         Generate 'num_points' amount of samples of uncertainty values
         within the range (0, self.uncertainty_amount).
         Samples generated uniformly randomly
         '''
-        return np.random.rand(num_points, self.len_costmap) * self.uncertainty_amount
+        if mode == 'all_indices':
+            return np.random.rand(num_points, self.len_costmap) * self.uncertainty_amount
+        elif mode == 'one_index':
+            assert index is not None
+            fixed_uncertainties = np.random.rand(1, self.len_costmap) * self.uncertainty_amount
+            fixed_uncertainties = np.repeat(fixed_uncertainties, num_points, axis=0)
+            varying_uncertainties = np.linspace(0, self.uncertainty_amount, num_points)
+            # varying_uncertainties = varying_uncertainties.reshape(num_points)
+            fixed_uncertainties[:, index] = varying_uncertainties
+            return fixed_uncertainties
+        else:
+           raise Exception("Unknown uncertainty sampling mode!") 
     
     def get_planner_cost_uncertainty_profile(self, dummy_start_config, uncertainty_samples, 
                                     ind=0, num_desired_waypoints=NUM_DESIRED_WAYPOINTS):
@@ -581,7 +592,7 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
 
         dummy_sc = DUMMY_SC 
         num_uncertainty_samples = NUM_UNCERTAINTY_SAMPLES
-        uncertainty_samples = self.sample_uncertainties(num_uncertainty_samples)
+        uncertainty_samples = self.sample_uncertainties(num_uncertainty_samples, mode='one_index', index=0)
         for ind in range(NUM_UNCERTAINTY_SAMPLES):
             data = self.get_planner_cost_uncertainty_profile(dummy_sc, uncertainty_samples, ind=ind)
             optimal_cost, optimal_waypoint, uncertainty, plan, plan_cost = data['viz']
@@ -601,6 +612,9 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
                                     additional_waypoints, additional_costs, 
                                     display_uncertainties=display_uncertainties,
                                     figname=figname)
+            
+            if NUM_UNCERTAINTY_SAMPLES > 20:
+                break
 
         plt.figure(figsize=(10, 11))
         plt.scatter(data['uncertainty_norms'], data['cost_diffs'])
