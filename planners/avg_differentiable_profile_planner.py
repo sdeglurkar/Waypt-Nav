@@ -7,7 +7,7 @@ import tensorflow as tf
 import time
 from trajectory.trajectory import Trajectory, SystemConfig
 
-NUM_DESIRED_WAYPOINTS = 1000  # How many points in the costmap to visualize for 1 robot pose
+NUM_DESIRED_WAYPOINTS = 10 #1000  # How many points in the costmap to visualize for 1 robot pose
 DUMMY_SC = [8.5, 10.5, 0.0] # Dummy start config -- getting the gradient at 1 data point
 SIZE_DATASET = 1000  # Number of points to evaluate gradients for
 OBSTACLE_COST = 100  # Defining the cost of an obstacle 
@@ -17,6 +17,7 @@ PER_POINT_VIZ = 35  # If size dataset is < this value, some debugging is done
 IMAGE_PATH = 'images/'
 TXT_PATH = 'txt/'
 MAX_LEN_TXT_FILE = 100
+NUM_UNCERTAINTY_SAMPLES = 20
 
 
 class AvgDifferentiableProfilePlanner(NNPlanner):
@@ -25,10 +26,12 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
     plan using a trained (costmap) neural network.
     Given the sampled plans, will take a weighted average depending on the
     samples' costs and uncertainties.
+    Differs from AvgDifferentiablePlanner in that this file will produce
+    computations related to the planner's uncertainty and cost profiles.
     """
 
     def __init__(self, simulator, params):
-        super(AvgDifferentiablePlanner, self).__init__(simulator, params)
+        super(AvgDifferentiableProfilePlanner, self).__init__(simulator, params)
         self.theta = self.params.diff_planner_uncertainty_weight 
         self.len_costmap = self.params.len_costmap
         self.finite_differencing_delta = self.params.diff_planner_finite_diff_delta
@@ -116,6 +119,97 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
                                         position_nk2=pos_nk2,
                                         heading_nk1=head_nk1)
         return state_config
+    
+    def run_planner(self, costmap, uncertainties):
+        '''
+        costmap: a W x 4 array, in which W is the number of sample trajectories
+                outputted by the neural network and 4 represents the size of the
+                waypoint (3) + 1 for the cost of the waypoint
+        uncertainties: uncertainty values per sample trajectory/waypoint
+
+        Outputs the weighted average of the sample trajectories.
+        '''
+        costs = costmap[:, 3]
+        candidate_waypoints = costmap[:, :3]
+
+        # Take the weighted average of the candidate waypoints
+        weights = costs + self.theta * uncertainties
+        inverse_weights = np.reshape(np.divide(1.0, weights), [self.len_costmap, 1])
+        numerator = np.matmul(np.transpose(candidate_waypoints), inverse_weights)
+        denominator = np.sum(inverse_weights)
+        plan = np.divide(numerator, denominator)
+        return plan
+    
+    def get_cost_of_a_point(self, start_config, point):
+        '''
+        From the given start_config, which is an array, to the
+        point, which is in world coordinates and is also an array
+        '''
+        start_sys_config = self.convert_state_arr_to_config(start_config)
+        waypoint_config = self.convert_state_arr_to_config(point)
+        obj_val, data = self.eval_objective(start_sys_config, waypoint_config)
+
+        return obj_val.numpy(), data
+    
+    def sample_uncertainties(self, num_points):
+        '''
+        Generate 'num_points' amount of samples of uncertainty values
+        within the range (0, self.uncertainty_amount).
+        Samples generated uniformly randomly
+        '''
+        return np.random.rand(num_points, self.len_costmap) * self.uncertainty_amount
+    
+    def get_planner_cost_uncertainty_profile(self, dummy_start_config, uncertainty_samples, 
+                                    ind=0, num_desired_waypoints=NUM_DESIRED_WAYPOINTS):
+        '''
+        Generate the function mapping from uncertainties to plans and also generate the 
+        function mapping from plans to costs. 
+        '''
+        data = self.get_true_costmap(dummy_start_config, num_desired_waypoints, self.len_costmap)
+        true_costmap_n4 = data['nn_costmap_true'] 
+        optimal_cost = data['optimal_cost']  # TODO(sdeglurkar): REPLACE with optimal cost in cvx hull of waypts
+        optimal_waypoint = data['optimal_waypoint']
+        full_costmap_n4 = data['full_costmap_n4']
+
+        # The optimal waypoint in the NN ground truth costmap
+        best_cost_costmap = np.min(true_costmap_n4[:, 3])
+        best_cost_ind_costmap = np.argmin(true_costmap_n4[:, 3])
+        best_waypoint_costmap = true_costmap_n4[best_cost_ind_costmap, :3]
+
+        # Simulated network output -- ground truth costs + noise
+        nn_output_n4 = np.copy(true_costmap_n4)
+        nn_output_n4[:, 3] = nn_output_n4[:, 3] + self.pre_determined_noise 
+
+        uncertainty_norms = []
+        plans = []
+        costs = []
+        cost_diffs = []
+        viz = [optimal_cost, optimal_waypoint]
+        for i in range(len(uncertainty_samples)):
+            print(i)
+            uncertainty = uncertainty_samples[i]
+            uncertainty_norm = np.linalg.norm(uncertainty)
+            plan = self.run_planner(nn_output_n4, uncertainty)
+            #print(uncertainty, plan)
+            cost, _ = self.get_cost_of_a_point(dummy_start_config, plan)
+            uncertainty_norms.append(uncertainty_norm)
+            plans.append(plan)
+            costs.append(cost[0])
+            #print(cost, optimal_cost)
+            cost_diffs.append(np.abs(cost[0] - optimal_cost))
+            if i == ind:
+                viz.extend([uncertainty, plan, cost])
+                print("UNCERTAINTY NORM", uncertainty_norm)
+                print("COST DIFF", np.abs(cost[0] - optimal_cost))
+
+        data = {'uncertainty_norms': uncertainty_norms,
+                'plans': plans,
+                'costs': costs,
+                'cost_diffs': cost_diffs,
+                'nn_output_n4': nn_output_n4,
+                'full_costmap_n4': full_costmap_n4,
+                'viz': viz}
+        return data
 
     def get_uncertainties(self, mode='random', nn_costs=None):
         '''
@@ -140,18 +234,6 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         else:
             raise Exception("Unknown uncertainty mode!")
         return uncertainties
-    
-    def get_cost_of_a_waypoint(self, start_config, waypoint):
-        '''
-        From the given start_config, which is an array, to the
-        waypoint, which is in world coordinates and is also
-        an array
-        '''
-        start_sys_config = self.convert_state_arr_to_config(start_config)
-        waypoint_config = self.convert_state_arr_to_config(waypoint[0])
-        obj_val, data = self.eval_objective(start_sys_config, waypoint_config)
-
-        return obj_val.numpy(), data
 
     def get_gradient_cost_wrt_plan(self, waypoint, start_config):
         '''
@@ -176,7 +258,7 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         # Generate the costs for all perturbations
         perturbed_costs = []
         for perturbed_waypoint in perturbed_waypoints:
-            obj_val, _ = self.get_cost_of_a_waypoint(start_config, perturbed_waypoint)
+            obj_val, _ = self.get_cost_of_a_point(start_config, perturbed_waypoint)
             perturbed_costs.append(obj_val)
 
         cost_grads = []
@@ -190,7 +272,7 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         cost_grad = tf.convert_to_tensor(np.reshape(cost_grads, (1, 3)), dtype=tf.double)  # [1, 3]
 
         # Also compute a percent cost gradient in case that is useful later
-        plan_cost, _ = self.get_cost_of_a_waypoint(start_config, waypoint)
+        plan_cost, _ = self.get_cost_of_a_point(start_config, waypoint)
         plan_cost = plan_cost[0]
 
         percent_cost_grad = []
@@ -291,7 +373,8 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         waypts, _, _, _, _ = data
         optimal_cost = np.min(obj_vals)
         optimal_cost_ind = np.argmin(obj_vals)
-        optimal_waypoint = np.squeeze(waypts[optimal_cost_ind])
+        optimal_waypoint = waypts[optimal_cost_ind]
+        optimal_waypoint = optimal_waypoint.position_and_heading_nk3().numpy()
 
         # What percent of these costs are obstacle costs?
         obstacle_obj_vals = obj_vals[np.where(obj_vals > OBSTACLE_COST)]
@@ -340,7 +423,7 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         return_dict = {'full_costmap_n4': full_costmap_n4,
                         'nn_costmap_true': nn_costmap_true,
                         'optimal_cost': optimal_cost,
-                        'optimal_waypoint': optimal_waypoint,
+                        'optimal_waypoint': optimal_waypoint.squeeze(),
                         'percent_obstacle': percent_obstacle,
                         'percent_obstacle_close': percent_obstacle_close
                         }
@@ -440,7 +523,7 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
                 start_config_theta = np.random.rand() * (2*np.pi) - np.pi
             start_config = np.array([start_config_x, start_config_y, start_config_theta])
             perturb_config = start_config + 0.01*np.ones(3)
-            obj_val, _ = self.get_cost_of_a_waypoint(start_config, np.reshape(perturb_config, (1, 3)))
+            obj_val, _ = self.get_cost_of_a_point(start_config, np.reshape(perturb_config, (1, 3)))
             obj_val = obj_val[0]
             return obj_val, start_config
 
@@ -497,34 +580,34 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         # by other parts of the codebase
 
         dummy_sc = DUMMY_SC 
-        data = self.get_gradient_one_data_point(dummy_start_config=dummy_sc)
-        dummy_start_config = data['dummy_start_config']
-        full_costmap_n4 = data['full_costmap_n4']
-        nn_output_n4 = data['nn_output_n4']
-        uncertainties = data['uncertainties']
-        plan = data['plan']
-        final_grads = data['final_grads']
-        perturbed_waypoints = data['perturbed_waypoints']
-        perturbed_costs = data['perturbed_costs']
-        plan_cost = data['plan_cost']
+        num_uncertainty_samples = NUM_UNCERTAINTY_SAMPLES
+        uncertainty_samples = self.sample_uncertainties(num_uncertainty_samples)
+        for ind in range(NUM_UNCERTAINTY_SAMPLES):
+            data = self.get_planner_cost_uncertainty_profile(dummy_sc, uncertainty_samples, ind=ind)
+            optimal_cost, optimal_waypoint, uncertainty, plan, plan_cost = data['viz']
+            full_costmap_n4 = data['full_costmap_n4']
+            nn_output_n4 = data['nn_output_n4']
+            print(optimal_cost, optimal_waypoint)
 
-        # Visualize costmap for dummy_start_config along with the plan and the perturbed
-        # points around the plan
-        perturbed_costs = list(np.stack([cost[0] for cost in perturbed_costs]))
-        additional_waypoints = perturbed_waypoints.copy()
-        additional_waypoints.extend(full_costmap_n4[:, :3])
-        additional_costs = perturbed_costs.copy()
-        additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
+            additional_waypoints = [optimal_waypoint.copy()]
+            additional_waypoints.extend(full_costmap_n4[:, :3])
+            additional_costs = [optimal_cost]
+            additional_costs.extend(np.squeeze(full_costmap_n4[:, 3]))
+            print(additional_waypoints, additional_costs)
 
-        display_uncertainties = (len(full_costmap_n4) <= DISPLAY_MULT*self.len_costmap)  # too many points to display
-        self.visualize_waypoints(dummy_start_config, nn_output_n4, uncertainties, plan, plan_cost,
-                                additional_waypoints, additional_costs, display_uncertainties)
-        
-        # Analyze gradients for a dataset of robot poses
-        dataset_info = self.get_gradients_dataset(fixed_theta=0.0)
-        data = self.process_dataset_info(dataset_info, 
-                                        visualize_critical_pts_threshold=True, 
-                                        plot_relationships=True)
+            display_uncertainties = (len(full_costmap_n4) <= DISPLAY_MULT*self.len_costmap)  # too many points to display
+            figname = 'waypoints_heatmap_'+str(ind)+'.png'
+            self.visualize_waypoints(dummy_sc, nn_output_n4, uncertainty, plan, plan_cost,
+                                    additional_waypoints, additional_costs, 
+                                    display_uncertainties=display_uncertainties,
+                                    figname=figname)
+
+        plt.figure(figsize=(10, 11))
+        plt.scatter(data['uncertainty_norms'], data['cost_diffs'])
+        plt.title("Planner Cost Profile")
+        plt.xlabel("Norm of Uncertainty")
+        plt.ylabel("|c - c*|")
+        plt.savefig("cost_profile.png")
 
         sys.exit()
         # All of the rest of this function is needed for this planner to work with the 
@@ -557,7 +640,7 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         return data
     
     def visualize_waypoints(self, start_config, costmap, uncertainties, plan, plan_cost,
-                            additional_waypoints, additional_costs, 
+                            additional_waypoints, additional_costs, figname='waypoints_heatmap.png',
                             display_uncertainties=True):
         '''
         Plot a heatmap-style plot of various candidate waypoints and the plan
@@ -595,14 +678,14 @@ class AvgDifferentiableProfilePlanner(NNPlanner):
         if display_uncertainties:
             for i in range(len(costmap)):
                 waypoint = costmap[i]
-                uncertainty = uncertainties[i].numpy()
+                uncertainty = uncertainties[i]
                 # Plot a circle
                 angle = np.linspace(0, 2 * np.pi, 150) 
                 radius = uncertainty
                 x = radius * np.cos(angle) + waypoint[0]
                 y = radius * np.sin(angle) + waypoint[1]
                 plt.plot(x, y, 'k')
-        fig.savefig(IMAGE_PATH + 'waypoints_heatmap.png')
+        fig.savefig(figname)
 
     def process_dataset_info(self, dataset_info, visualize_critical_pts_threshold=False,
                                 plot_relationships=False):
